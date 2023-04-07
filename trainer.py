@@ -72,7 +72,6 @@ class Trainer:
         self.parameters_to_train += list(self.models["depth"].parameters())
 
 
-
         self.models["pose_encoder"] = networks.ResnetEncoder(
             18,
             self.opt.weights_init == "pretrained",
@@ -135,21 +134,21 @@ class Trainer:
         val_filenames = readlines(fpath.format("val"))
         img_ext = '.png' if self.opt.png else '.jpg'
 
-        num_train_samples = len(train_filenames)
+        num_train_samples = len(train_filenames)  # 39810
         self.num_total_steps = num_train_samples // self.opt.batch_size * self.opt.num_epochs
 
         train_dataset = self.dataset(
             self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
+            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)  # 39810
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)  # 6635
         val_dataset = self.dataset(
             self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
+            self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)  # 4424
         self.val_loader = DataLoader(
             val_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True) # 737
         self.val_iter = iter(self.val_loader)
 
         self.writers = {}
@@ -231,10 +230,10 @@ class Trainer:
             if early_phase or late_phase:
                 self.log_time(batch_idx, duration, losses["loss"].cpu().data)
 
-                if "depth_gt" in inputs:
+                if "depth_gt" in inputs:  # [6, 1, 375, 1242]
                     self.compute_depth_losses(inputs, outputs, losses)
 
-                self.log("train", inputs, outputs, losses)
+                self.log("train", inputs, outputs, losses)  # what's this
                 self.val()
 
             self.step = self.step + 1
@@ -245,8 +244,11 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
 
+        # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
         features = self.models["encoder"](inputs["color_aug", 0, 0])
+        # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
         outputs = self.models["depth"](features)
+        # outputs[('disp', 3)]: [6, 1, 24, 80], outputs[('disp', 2)]: [6, 1, 48, 160], outputs[('disp', 1)]:[6, 1, 96, 320], outputs[('disp', 0)]: [6, 1, 192, 640]
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
@@ -549,7 +551,7 @@ class Trainer:
     def save_model(self):
         """Save model weights to disk
         """
-        save_folder = os.path.join(self.log_path, "models", "weights_{}".format(self.epoch))
+        save_folder = os.path.join(self.log_path, "models", "test_weights_{}".format(self.epoch))
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
 

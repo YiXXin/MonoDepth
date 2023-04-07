@@ -18,6 +18,7 @@ Our experiments has been done with PyTorch 1.9.0, CUDA 11.2, Python 3.8.5 and Ub
 
 ## Simple Prediction
 
+pwd: /remote-home/share/KITTI/KITTI_fengyi/
 You can simply visualize the depth estimation results on some images from KITTI with:
 
 ```shell
@@ -66,6 +67,10 @@ Then, you place the pretrained weight in ./checkpoints/imagenet folder.
 The depth estimation network is trained by running:
 ```shell
 python train.py --data_path=/YOUR/DATA/PATH --log_dir=./checkpoints --model_name=ht_dcmnet --num_epochs=40 --batch_size=12
+```
+My training:
+```shell
+python train.py --data_path=/remote-home/share/KITTI/KITTI_fengyi --log_dir=./checkpoints --model_name=ht_dcmnet --num_epochs=40 --batch_size=6 --png
 ```
 
 ## Evaluation
