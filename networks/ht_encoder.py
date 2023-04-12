@@ -594,6 +594,8 @@ class H_Transformer(nn.Module):
     def forward(self, x):
         """Forward function."""
 
+        from ipdb import set_trace
+        set_trace()
         if not self.is_classifier:
             img = (x - 0.45) / 0.225
 
@@ -615,6 +617,7 @@ class H_Transformer(nn.Module):
         for i in range(self.num_layers):
             layer = self.layers[i]
             x_out, H, W, x, Wh, Ww = layer(x, Wh, Ww)
+            # x_out: [6, 30720, 64], [6, 7680, 128]
 
             if i in self.out_indices:
                 norm_layer = getattr(self, f'norm{i}')

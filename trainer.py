@@ -21,6 +21,7 @@ from torch import nn
 
 import datasets
 import networks
+from networks import bi_encoder
 
 
 class Trainer:
@@ -43,11 +44,13 @@ class Trainer:
 
         assert self.opt.frame_ids[0] == 0, "frame_ids must start with 0"
 
-
+        # from ipdb import set_trace 
+        # set_trace()
 
 
         norm_cfg = dict(type='BN', requires_grad=True)
-        self.models["encoder"] = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
+        self.models["encoder"] = bi_encoder.biformer_tiny()
+        # self.models["encoder"] = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
         self.models["depth"] = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
                                                 channels=128,
                                                 dropout_ratio=0.1,
@@ -57,9 +60,9 @@ class Trainer:
 
 
 
-        ckpt = torch.load('./checkpoints/imagenet/104checkpoint.pth', map_location='cpu')
+        # ckpt = torch.load('./checkpoints/imagenet/104checkpoint.pth', map_location='cpu')
 
-        self.models["encoder"].load_state_dict(ckpt['encoder'])
+        # self.models["encoder"].load_state_dict(ckpt['encoder'])
 
 
 
@@ -244,6 +247,8 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
 
+        from ipdb import set_trace 
+        set_trace()
         # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
         features = self.models["encoder"](inputs["color_aug", 0, 0])
         # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
