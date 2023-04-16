@@ -70,7 +70,7 @@ python train.py --data_path=/YOUR/DATA/PATH --log_dir=./checkpoints --model_name
 ```
 My training:
 ```shell
-python train.py --data_path=/remote-home/share/KITTI/KITTI_fengyi --log_dir=./checkpoints --model_name=ht_dcmnet --num_epochs=40 --batch_size=6 --png
+python train.py --data_path=/remote-home/share/KITTI/KITTI_fengyi --log_dir=./checkpoints --model_name=ht_dcmnet --num_epochs=40 --batch_size=3 --png
 ```
 
 ## Evaluation

@@ -247,8 +247,8 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
 
-        from ipdb import set_trace 
-        set_trace()
+        # from ipdb import set_trace 
+        # set_trace()
         # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
         features = self.models["encoder"](inputs["color_aug", 0, 0])
         # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
@@ -556,7 +556,7 @@ class Trainer:
     def save_model(self):
         """Save model weights to disk
         """
-        save_folder = os.path.join(self.log_path, "models", "test_weights_{}".format(self.epoch))
+        save_folder = os.path.join(self.log_path, "bi_models_0414", "weights_{}".format(self.epoch))
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
 

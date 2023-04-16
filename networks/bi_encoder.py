@@ -92,14 +92,17 @@ class Block(nn.Module):
         self.pre_norm = pre_norm
             
 
-    def forward(self, x, H, W):
+    def forward(self, x):
         """
         x: NCHW tensor
         """
+        # from ipdb import set_trace 
+        
+        # set_trace()
         # conv pos embedding
-        x = x + self.pos_embed(x)
+        x = x + self.pos_embed(x)  # [6, 64, 48, 160]
         # permute to NHWC tensor for attention & mlp
-        x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+        x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)  [6, 48, 160, 64]
 
         # attention & mlp
         if self.pre_norm:
@@ -177,10 +180,12 @@ class BiFormer(nn.Module):
         self.downsample_layers = nn.ModuleList()
         # NOTE: uniformer uses two 3*3 conv, while in many other transformers this is one 7*7 conv 
         stem = nn.Sequential(
-            nn.Conv2d(in_chans, embed_dim[0] // 2, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
-            nn.BatchNorm2d(embed_dim[0] // 2),
-            nn.GELU(),
-            nn.Conv2d(embed_dim[0] // 2, embed_dim[0], kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
+            # nn.Conv2d(in_chans, embed_dim[0] // 2, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
+            # nn.BatchNorm2d(embed_dim[0] // 2),
+            # nn.GELU(),
+            # nn.Conv2d(embed_dim[0] // 2, embed_dim[0], kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
+            # nn.BatchNorm2d(embed_dim[0]),
+            nn.Conv2d(in_chans, embed_dim[0], kernel_size=(3, 3), stride=(2, 2), padding=(1, 1)),
             nn.BatchNorm2d(embed_dim[0]),
         )
         if (pe is not None) and 0 in pe_stages:
@@ -279,7 +284,8 @@ class BiFormer(nn.Module):
         return x
 
     def forward(self, x):
-        
+        # from ipdb import set_trace 
+        # set_trace()
         if not self.is_classifier:
             img = (x - 0.45) / 0.225
 
@@ -288,13 +294,13 @@ class BiFormer(nn.Module):
 
         outs = []
         for i in range(self.num_layers):
-            x = self.downsample_layers[i](x)
+            x = self.downsample_layers[i](x) # [6, 64, 48, 160]
             if i == 0:
                 Wh, Ww = x.size(2), x.size(3)
             stage = self.stages[i]
-            x_out = stage(x, Wh, Ww)
-            out = x_out.flatten(2).mean(-1)
-            outs.append(out)
+            x_out = stage(x)  # [6, 64, 48, 160]
+            # out = x_out.flatten(2).mean(-1)  # [6,64]
+            outs.append(x_out)
         # x = self.forward_features(x)
         # x = x_out.flatten(2).mean(-1)
         # x = self.head(x)
@@ -320,7 +326,7 @@ def biformer_tiny(pretrained=False, pretrained_cfg=None,
         depth=[2, 2, 8, 2],
         embed_dim=[64, 128, 256, 512], mlp_ratios=[3, 3, 3, 3],
         #------------------------------
-        n_win=7,
+        n_win=4,
         kv_downsample_mode='identity',
         kv_per_wins=[-1, -1, -1, -1],
         topks=[1, 4, 16, -2],

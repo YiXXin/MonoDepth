@@ -594,15 +594,15 @@ class H_Transformer(nn.Module):
     def forward(self, x):
         """Forward function."""
 
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         if not self.is_classifier:
-            img = (x - 0.45) / 0.225
+            img = (x - 0.45) / 0.225   # [6, 3, 192, 640]
 
         else:
             img = x
 
-        x = self.patch_embed(img)
+        x = self.patch_embed(img)  # [6, 64, 96, 320]
 
         Wh, Ww = x.size(2), x.size(3)
         if self.ape:
@@ -610,8 +610,8 @@ class H_Transformer(nn.Module):
             absolute_pos_embed = F.interpolate(self.absolute_pos_embed, size=(Wh, Ww), mode='bicubic')
             x = (x + absolute_pos_embed).flatten(2).transpose(1, 2)  # B Wh*Ww C
         else:
-            x = x.flatten(2).transpose(1, 2)
-        x = self.pos_drop(x)
+            x = x.flatten(2).transpose(1, 2)  # [6, 30720, 64]
+        x = self.pos_drop(x) # [6, 30720, 64]
 
         outs = []
         for i in range(self.num_layers):
@@ -621,9 +621,9 @@ class H_Transformer(nn.Module):
 
             if i in self.out_indices:
                 norm_layer = getattr(self, f'norm{i}')
-                x_out = norm_layer(x_out)
+                x_out = norm_layer(x_out)  # [6, 30720, 64]
 
-                out = x_out.view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()
+                out = x_out.view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()  # [6, 64, 96, 320]
                 outs.append(out)
 
         return tuple(outs)
