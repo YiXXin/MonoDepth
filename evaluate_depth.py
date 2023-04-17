@@ -12,6 +12,7 @@ from utils import readlines
 from options import MonodepthOptions
 import datasets
 import networks
+from networks import bi_encoder
 
 
 cv2.setNumThreads(0)  # This speeds up evaluation 5x on our unix systems (OpenCV 3.3.1)
@@ -91,7 +92,8 @@ def evaluate(opt):
 
 
         norm_cfg = dict(type='BN', requires_grad=True)
-        encoder = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
+        encoder = bi_encoder.biformer_tiny()
+        # encoder = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
         depth_decoder = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
                                                 channels=128,
                                                 dropout_ratio=0.1,

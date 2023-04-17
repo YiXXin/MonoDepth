@@ -326,7 +326,7 @@ def biformer_tiny(pretrained=False, pretrained_cfg=None,
         depth=[2, 2, 8, 2],
         embed_dim=[64, 128, 256, 512], mlp_ratios=[3, 3, 3, 3],
         #------------------------------
-        n_win=4,
+        n_win=8,
         kv_downsample_mode='identity',
         kv_per_wins=[-1, -1, -1, -1],
         topks=[1, 4, 16, -2],
