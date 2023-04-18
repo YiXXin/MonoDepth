@@ -22,10 +22,14 @@ class MonodepthOptions:
 
 
         # TRAINING options
-        self.parser.add_argument("--model_name",
+        self.parser.add_argument("--use_flow",
+                                 type=bool,
+                                 help="whether training with flow",
+                                 default=False)
+        self.parser.add_argument("--depth_encoder",
                                  type=str,
-                                 help="the name of the folder to save the model in",
-                                 default="ht_dcmnet")
+                                 help="the model to extract features for depth",
+                                 default="swin")
         self.parser.add_argument("--split",
                                  type=str,
                                  help="which training split to use",
@@ -55,6 +59,10 @@ class MonodepthOptions:
                                  type=int,
                                  help="scales used in the loss",
                                  default=[0, 1, 2, 3])
+        self.parser.add_argument("--num_source",
+                                 type=int,
+                                 help="number of source images",
+                                 default=2)
         self.parser.add_argument("--min_depth",
                                  type=float,
                                  help="minimum depth",

@@ -15,6 +15,7 @@ import os
 from utils import *
 from kitti_utils import *
 from layers import *
+# from networks import *
 
 
 from torch import nn
@@ -22,6 +23,7 @@ from torch import nn
 import datasets
 import networks
 from networks import bi_encoder
+from networks import net_utils
 
 
 class Trainer:
@@ -33,6 +35,7 @@ class Trainer:
         assert self.opt.height % 32 == 0, "'height' must be a multiple of 32"
         assert self.opt.width % 32 == 0, "'width' must be a multiple of 32"
 
+        self._log = _log
         _log.info("=> fetching img pairs.")
         # data
         datasets_dict = {"kitti": datasets.KITTIRAWDataset}
@@ -80,23 +83,50 @@ class Trainer:
         # from ipdb import set_trace 
         # set_trace()
 
+        if self.opt.use_flow:
+            _log.info("=> Training depth and optical flow jointly.")
+        else:
+            _log.info("=> Only training depth.")
+        _log.info("Depth encoder is {}.".format(self.opt.depth_encoder))
 
         norm_cfg = dict(type='BN', requires_grad=True)
-        self.models["encoder"] = bi_encoder.biformer_tiny()
-        # self.models["encoder"] = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
-        self.models["depth"] = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
+
+        if not self.opt.use_flow:
+            if self.opt.depth_encoder == 'unet':
+                self.models["encoder"] = networks.ResnetEncoder(self.opt.num_layers, self.opt.weights_init == "pretrained")
+
+                self.models["depth"] = networks.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
+            
+            elif self.opt.depth_encoder == 'swin':
+                self.models["encoder"] = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
+                ckpt = torch.load('./checkpoints/imagenet/swin_checkpoint.pth', map_location='cpu')
+                self.models["encoder"].load_state_dict(ckpt['encoder'])
+
+                self.models["depth"] = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
+                                channels=128,
+                                dropout_ratio=0.1,
+                                num_classes=1,
+                                norm_cfg=norm_cfg,
+                                align_corners=False)
+            
+            elif self.opt.depth_encoder == 'biformer':
+                self.models["encoder"] = bi_encoder.biformer_tiny()
+                ckpt = torch.load('./checkpoints/imagenet/biformer_tiny_best.pth', map_location='cpu')
+                self.models["encoder"].load_state_dict(ckpt['encoder'])
+
+                self.models["depth"] = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
                                                 channels=128,
                                                 dropout_ratio=0.1,
                                                 num_classes=1,
                                                 norm_cfg=norm_cfg,
                                                 align_corners=False)
+        else:
+            self.models["encoder"] = networks.ResnetEncoder(self.opt.num_layers, self.opt.weights_init == "pretrained")
 
+            self.models["depth"] = networks.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
 
-
-        # ckpt = torch.load('./checkpoints/imagenet/104checkpoint.pth', map_location='cpu')
-
-        # self.models["encoder"].load_state_dict(ckpt['encoder'])
-
+            # self.models["flow"] = 
+            
 
 
         self.models["encoder"].to(self.device)
@@ -125,13 +155,8 @@ class Trainer:
         self.models["pose"].to(self.device)
         self.parameters_to_train += list(self.models["pose"].parameters())
 
-
-
         for model_name, model in self.models.items():
             self.models[model_name] = nn.DataParallel(model)
-
-
-
 
         if self.opt.predictive_mask:
             assert self.opt.disable_automasking, \
@@ -145,10 +170,6 @@ class Trainer:
             self.models["predictive_mask"].to(self.device)
             self.parameters_to_train += list(self.models["predictive_mask"].parameters())
 
-
-
-
-
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
             self.model_optimizer, self.opt.scheduler_step_size, 0.1)
@@ -156,10 +177,8 @@ class Trainer:
         if self.opt.load_weights_folder is not None:
             self.load_model()
 
-        print("Training model named:\n  ", self.opt.model_name)
-        print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
-        print("Training is using:\n  ", self.device)
-
+        _log.info("Training is using {}.".format(self.device))
+        # print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
 
         self.writers = {}
         for mode in ["train", "val"]:
@@ -218,7 +237,7 @@ class Trainer:
         """
         self.model_lr_scheduler.step()
 
-        print("Training")
+        self._log.info("=> fetching img pairs.")
         self.set_train()
 
         for batch_idx, inputs in enumerate(self.train_loader):
@@ -299,8 +318,112 @@ class Trainer:
             outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
                 axisangle[:, 0], translation[:, 0], invert=(f_i < 0))
 
-
         return outputs
+
+    def build_rigid_warp_flow(self):
+        global n_iter
+        # NOTE: this should be a python list,
+        # since the sizes of different level of the pyramid are not same
+        """
+        Uses self.poses and self.depth, computed through build_posenet() and build_dispnet(), respectively
+        """
+        args = self.opt
+        self.fwd_rigid_flow_pyramid = []
+        self.bwd_rigid_flow_pyramid = []
+
+        #print(self.depth[0].shape)
+        for scale in range(self.num_scales):    #num_scales is 4
+
+            for src in range(args.num_source):  #num_source is 2
+                # self.depth: (4, 12, _, _)
+                # self.poses: (4, 2, 6)
+                # self.multi_scale_intrinsices: (4, 4, 3, 3)
+                                
+                # (4, h, w, 2) for each particular scale
+                fwd_rigid_flow = net_utils.compute_rigid_flow( # Checks out
+                    self.poses[:, src, :],
+                    self.depth[scale][:args.batch_size, :, :], #the first disparity
+                    self.multi_scale_intrinsices[:, scale, :, :], False)
+        
+                # (4, h, w, 2)
+                bwd_rigid_flow = net_utils.compute_rigid_flow(
+                    self.poses[:, src, :],
+                    self.depth[scale][args.batch_size * (
+                        src + 1):args.batch_size * (src + 2), :, :],
+                    self.multi_scale_intrinsices[:, scale, :, :], True)
+                
+                if not src:
+                    fwd_rigid_flow_cat = fwd_rigid_flow
+                    bwd_rigid_flow_cat = bwd_rigid_flow
+                else:
+                    fwd_rigid_flow_cat = torch.cat(
+                        (fwd_rigid_flow_cat, fwd_rigid_flow), dim=0)
+                    bwd_rigid_flow_cat = torch.cat(
+                        (bwd_rigid_flow_cat, bwd_rigid_flow), dim=0)
+            
+            # After the inner loop runs: fwd_rigid_flow_cat - (b*src_imgs, h, w, 2)
+            
+            self.fwd_rigid_flow_pyramid.append(fwd_rigid_flow_cat)
+            self.bwd_rigid_flow_pyramid.append(bwd_rigid_flow_cat)
+
+        #After the outer loop runs: fwd_rigid_flow_pyramid: (scales, b*src_imgs, h, w, 2) like (4, 8, h, w, 2)
+        
+        self.fwd_rigid_warp_pyramid = [
+            net_utils.flow_warp(self.src_views_pyramid[scale],
+                      self.fwd_rigid_flow_pyramid[scale])
+            for scale in range(args.num_scales)
+        ]
+                
+#         print(self.fwd_rigid_warp_pyramid[0].shape, self.fwd_rigid_warp_pyramid) - different
+#         print(self.tmp_pyramid[0].shape, self.tmp_pyramid)
+        
+        self.bwd_rigid_warp_pyramid = [
+            net_utils.flow_warp(self.tgt_view_tile_pyramid[scale],
+                      self.bwd_rigid_flow_pyramid[scale])
+            for scale in range(args.num_scales)
+        ]
+
+        #print(len(self.fwd_rigid_warp_pyramid), " ", self.fwd_rigid_warp_pyramid[0].size())
+        #fwd_rigid_warp_pyramid: (8,128,416,3), (8,64,208,3), (8,32,104,3), (8,16,52,3)
+        
+        if n_iter % 10000 == 0:
+            for j in range(len(self.fwd_rigid_warp_pyramid)):
+                x = self.fwd_rigid_warp_pyramid[j].permute(0, 3, 1, 2)
+                x = (x - torch.min(x))/(torch.max(x)-torch.min(x))
+                self.tensorboard_writer.add_images('fwd_rigid_warp_scale' + str(j), x, n_iter)
+ 
+            for j in range(len(self.bwd_rigid_warp_pyramid)):
+                x = self.fwd_rigid_warp_pyramid[j].permute(0, 3, 1, 2)
+                x = (x - torch.min(x))/(torch.max(x)-torch.min(x))
+                self.tensorboard_writer.add_images('bwd_rigid_warp_scale' + str(j), x, n_iter)
+
+        self.fwd_rigid_error_pyramid = [
+            self.image_similarity(args.simi_alpha,
+                             self.tgt_view_tile_pyramid[scale],
+                             self.fwd_rigid_warp_pyramid[scale])
+            for scale in range(args.num_scales)
+        ]
+        self.bwd_rigid_error_pyramid = [
+            self.image_similarity(args.simi_alpha, self.src_views_pyramid[scale],
+                             self.bwd_rigid_warp_pyramid[scale])
+            for scale in range(args.num_scales)
+        ]
+        
+        if n_iter % 10000 == 0:
+            self.fwd_rigid_error_scale=[]
+            self.bwd_rigid_error_scale=[]
+            #fwd_rigid_error_pyramid[0]: (8, 3, 128, 416)
+
+            for j in range(len(self.fwd_rigid_error_pyramid)):
+                tmp=torch.mean(self.fwd_rigid_error_pyramid[j].permute(0, 3, 1, 2), dim=1, keepdim=True)
+                #tmp: (8, 1, 128, 416) in 1st iteration
+                self.tensorboard_writer.add_images('fwd_rigid_error_scale' + str(j), tmp, n_iter)
+                self.fwd_rigid_error_scale.append(tmp)
+
+            for j in range(len(self.bwd_rigid_error_pyramid)):
+                tmp=torch.mean(self.bwd_rigid_error_pyramid[j].permute(0, 3, 1, 2), dim=1, keepdim=True)
+                self.tensorboard_writer.add_images('bwd_rigid_error_scale' + str(j), tmp, n_iter)
+                self.bwd_rigid_error_scale.append(tmp)
 
     def val(self):
         """Validate the model on a single minibatch
@@ -502,6 +625,10 @@ class Trainer:
 
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
+
+    def image_similarity(alpha,x,y):
+    # print('alpha*DSSIM(x,y): {:.16f}\n torch.abs(x-y): {:.16f}'.format(torch.mean(alpha*DSSIM(x,y)),torch.mean((1-alpha)*torch.abs(x-y))))
+        return alpha * net_utils.DSSIM(x,y) + (1-alpha) * torch.abs(x - y)
 
     def log_time(self, batch_idx, duration, loss):
         """Print a logging statement to the terminal
