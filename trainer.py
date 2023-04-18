@@ -112,7 +112,15 @@ class Trainer:
             elif self.opt.depth_encoder == 'biformer':
                 self.models["encoder"] = bi_encoder.biformer_tiny()
                 ckpt = torch.load('./checkpoints/imagenet/biformer_tiny_best.pth', map_location='cpu')
-                self.models["encoder"].load_state_dict(ckpt['encoder'])
+                i=0
+                weight={}
+                for k,v in ckpt['model'].items():
+                    i=i+1
+                    if i>6:
+                        weight.update({k:v})
+                # from ipdb import set_trace 
+                # set_trace()
+                self.models["encoder"].load_state_dict(weight, strict=False)
 
                 self.models["depth"] = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
                                                 channels=128,
@@ -126,15 +134,14 @@ class Trainer:
             self.models["depth"] = networks.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
 
             # self.models["flow"] = 
-            
 
 
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
-        print(self.device)
+        # print(self.device)
         self.models["depth"].to(self.device)
-        print(self.models["depth"].parameters())
+        # print(self.models["depth"].parameters())
         self.parameters_to_train += list(self.models["depth"].parameters())
 
 
@@ -158,7 +165,7 @@ class Trainer:
         for model_name, model in self.models.items():
             self.models[model_name] = nn.DataParallel(model)
 
-        if self.opt.predictive_mask:
+        if self.opt.predictive_mask:   # false
             assert self.opt.disable_automasking, \
                 "When using predictive_mask, please disable automasking with --disable_automasking"
 
@@ -177,12 +184,12 @@ class Trainer:
         if self.opt.load_weights_folder is not None:
             self.load_model()
 
-        _log.info("Training is using {}.".format(self.device))
+        _log.info("Training is using {} with split {}.".format(self.device, self.opt.split))
         # print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
 
         self.writers = {}
         for mode in ["train", "val"]:
-            self.writers[mode] = SummaryWriter(os.path.join(self.log_path, mode))
+            self.writers[mode] = SummaryWriter(os.path.join(self.opt.save_root, mode))
 
         if not self.opt.no_ssim:
             self.ssim = SSIM()
@@ -203,11 +210,11 @@ class Trainer:
         self.depth_metric_names = [
             "de/abs_rel", "de/sq_rel", "de/rms", "de/log_rms", "da/a1", "da/a2", "da/a3"]
 
-        print("Using split:\n  ", self.opt.split)
-        print("There are {:d} training items and {:d} validation items\n".format(
-            len(train_dataset), len(val_dataset)))
+        # print("Using split:\n  ", self.opt.split)
+        # print("There are {:d} training items and {:d} validation items\n".format(
+        #     len(train_dataset), len(val_dataset)))
 
-        self.save_opts()
+        # self.save_opts()
 
     def set_train(self):
         """Convert all models to training mode
@@ -236,8 +243,10 @@ class Trainer:
         """Run a single epoch of training and validation
         """
         self.model_lr_scheduler.step()
+        from ipdb import set_trace 
+        set_trace()
 
-        self._log.info("=> fetching img pairs.")
+        self._log.info("=> Start training.")
         self.set_train()
 
         for batch_idx, inputs in enumerate(self.train_loader):
@@ -275,10 +284,11 @@ class Trainer:
 
         # from ipdb import set_trace 
         # set_trace()
+        if not self.opt.use_flow:
         # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
-        features = self.models["encoder"](inputs["color_aug", 0, 0])
+            features = self.models["encoder"](inputs["color_aug", 0, 0])
         # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
-        outputs = self.models["depth"](features)
+            outputs = self.models["depth"](features)
         # outputs[('disp', 3)]: [6, 1, 24, 80], outputs[('disp', 2)]: [6, 1, 48, 160], outputs[('disp', 1)]:[6, 1, 96, 320], outputs[('disp', 0)]: [6, 1, 192, 640]
 
         if self.opt.predictive_mask:
@@ -295,10 +305,10 @@ class Trainer:
         """Predict poses between input frames for monocular sequences.
         """
         outputs = {}
+        from ipdb import set_trace 
+        set_trace()
         # In this setting, we compute the pose to each source frame via a
         # separate forward pass through the pose network.
-
-
         pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}
 
         for f_i in self.opt.frame_ids[1:]:
