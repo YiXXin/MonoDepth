@@ -282,8 +282,8 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
 
-        # from ipdb import set_trace 
-        # set_trace()
+        from ipdb import set_trace 
+        set_trace()
         if not self.opt.use_flow:
         # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
             features = self.models["encoder"](inputs["color_aug", 0, 0])
@@ -309,9 +309,9 @@ class Trainer:
         set_trace()
         # In this setting, we compute the pose to each source frame via a
         # separate forward pass through the pose network.
-        pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}
+        pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}  # keys: 0,-1,1
 
-        for f_i in self.opt.frame_ids[1:]:
+        for f_i in self.opt.frame_ids[1:]:  # [-1,1]
             # To maintain ordering we always pass frames in temporal order
             if f_i < 0:
                 pose_inputs = [pose_feats[f_i], pose_feats[0]]
@@ -320,7 +320,8 @@ class Trainer:
 
             pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
 
-            axisangle, translation = self.models["pose"](pose_inputs)
+            axisangle, translation = self.models["pose"](pose_inputs) # [4,2,1,3]
+            outputs["pose", f_i] = torch.cat((torch.squeeze(axisangle),torch.squeeze(translation)),2)
             outputs[("axisangle", 0, f_i)] = axisangle
             outputs[("translation", 0, f_i)] = translation
 

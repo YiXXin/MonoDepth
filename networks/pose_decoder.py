@@ -26,10 +26,12 @@ class PoseDecoder(nn.Module):
         self.net = nn.ModuleList(list(self.convs.values()))
 
     def forward(self, input_features):
-        last_features = [f[-1] for f in input_features]
+        from ipdb import set_trace 
+        set_trace()
+        last_features = [f[-1] for f in input_features]  # len=1 [4,512,6,20]
 
-        cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]
-        cat_features = torch.cat(cat_features, 1)
+        cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]  # [4,256,6,20]
+        cat_features = torch.cat(cat_features, 1) # [4,256,6,20]
 
         out = cat_features
         for i in range(3):
@@ -37,7 +39,7 @@ class PoseDecoder(nn.Module):
             if i != 2:
                 out = self.relu(out)
 
-        out = out.mean(3).mean(2)
+        out = out.mean(3).mean(2)  # [4,12,6,20] -> [4,12]
 
         out = 0.01 * out.view(-1, self.num_frames_to_predict_for, 1, 6)
 
