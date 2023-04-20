@@ -63,6 +63,11 @@ class MonodepthOptions:
                                  type=int,
                                  help="number of source images",
                                  default=2)
+        self.parser.add_argument("--num_layers",
+                                 type=int,
+                                 help="number of resnet layers",
+                                 default=18,
+                                 choices=[18, 34, 50, 101, 152])
         self.parser.add_argument("--min_depth",
                                  type=float,
                                  help="minimum depth",
@@ -143,7 +148,7 @@ class MonodepthOptions:
         self.parser.add_argument("--log_frequency",
                                  type=int,
                                  help="number of batches between each tensorboard log",
-                                 default=250)
+                                 default=100)
         self.parser.add_argument("--save_frequency",
                                  type=int,
                                  help="number of epochs between each save",

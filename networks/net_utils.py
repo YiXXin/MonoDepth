@@ -5,6 +5,53 @@ import numpy as np
 device = torch.device(
     'cuda') if torch.cuda.is_available() else torch.device('cpu')
 
+def scale_pyramid(img, num_scales):
+    # img: (b, ch, h, w)
+    if img is None:
+        return None
+    else:
+
+        # TODO: Shape of image is [channels, h, w]     
+        b, ch, h, w = img.shape
+        scaled_imgs = [img.permute(0,2,3,1)]
+#         print(scaled_imgs[0])
+        
+        for i in range(num_scales - 1):
+            ratio = 2 ** (i+1)
+            nh = int(h/ratio)
+            nw = int(w/ratio)
+            
+            scaled_img = torch.nn.functional.interpolate(img, size=(nh, nw), mode='area')
+            scaled_img = scaled_img.permute(0, 2, 3, 1)
+            
+            scaled_imgs.append(scaled_img)        
+
+        # scaled_imgs: (scales, b, h, w, ch)
+        
+    return scaled_imgs
+
+def compute_multi_scale_intrinsics(intrinsics, num_scales):
+
+    batch_size = intrinsics.shape[0]
+    multi_scale_intrinsices = []
+    for s in range(num_scales):
+        fx = intrinsics[:, 0, 0]/(2**s)
+        fy = intrinsics[:, 1, 1]/(2**s)
+        cx = intrinsics[:, 0, 2]/(2**s)
+        cy = intrinsics[:, 1, 2]/(2**s)
+        zeros = torch.zeros(batch_size).float().to(device)
+        r1 = torch.stack([fx, zeros, cx], dim=1)  # shape: batch_size,3
+        r2 = torch.stack([zeros, fy, cy], dim=1)  # shape: batch_size,3
+        # shape: batch_size,3
+        r3 = torch.tensor([0., 0., 1.]).float().view(
+            1, 3).repeat(batch_size, 1).to(device)
+        # concat along the spatial row dimension
+        scale_instrinsics = torch.stack([r1, r2, r3], dim=1)
+        multi_scale_intrinsices.append(
+            scale_instrinsics)  # shape: num_scale,bs,3,3
+    multi_scale_intrinsices = torch.stack(multi_scale_intrinsices, dim=1)
+    return multi_scale_intrinsices
+
 def DSSIM(x, y):
     
     avepooling2d = torch.nn.AvgPool2d(3, stride=1, padding=[1, 1])

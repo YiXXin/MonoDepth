@@ -22,6 +22,7 @@ from torch import nn
 
 import datasets
 import networks
+from networks import depth_decoder
 from networks import bi_encoder
 from networks import net_utils
 
@@ -95,7 +96,7 @@ class Trainer:
             if self.opt.depth_encoder == 'unet':
                 self.models["encoder"] = networks.ResnetEncoder(self.opt.num_layers, self.opt.weights_init == "pretrained")
 
-                self.models["depth"] = networks.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
+                self.models["depth"] = depth_decoder.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
             
             elif self.opt.depth_encoder == 'swin':
                 self.models["encoder"] = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
@@ -243,8 +244,8 @@ class Trainer:
         """Run a single epoch of training and validation
         """
         self.model_lr_scheduler.step()
-        from ipdb import set_trace 
-        set_trace()
+        # from ipdb import set_trace 
+        # set_trace()
 
         self._log.info("=> Start training.")
         self.set_train()
@@ -254,6 +255,7 @@ class Trainer:
             before_op_time = time.time()
 
             outputs, losses = self.process_batch(inputs)
+            # outputs[('pose',-1)].shape: [4,2,6]
 
             self.model_optimizer.zero_grad()
             losses["loss"].backward()
@@ -282,8 +284,10 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
 
-        from ipdb import set_trace 
-        set_trace()
+        data = [inputs[("color_aug", 0, 0)], inputs[("color_aug", -1, 0)], inputs[("color_aug", 1, 0)]]
+        self.iter_data_preparation(data, inputs[("K",0)])
+        # from ipdb import set_trace 
+        # set_trace()
         if not self.opt.use_flow:
         # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
             features = self.models["encoder"](inputs["color_aug", 0, 0])
@@ -297,16 +301,71 @@ class Trainer:
         outputs.update(self.predict_poses(inputs, features))
 
         self.generate_images_pred(inputs, outputs)
+
+        pred_depth = [outputs[('disp', 0)], outputs[('disp', 1)], outputs[('disp', 2)], outputs[('disp', 3)]]
+        self.build_rigid_warp_flow(outputs[('pose',-1)], pred_depth)
+
         losses = self.compute_losses(inputs, outputs)
 
         return outputs, losses
+
+    def iter_data_preparation(self, sampled_batch, k):
+        args = self.opt
+        from ipdb import set_trace
+        set_trace()
+        # sampled_batch: tgt_view, src_views, intrinsics
+        
+        # shape: batch, ch, h,w
+        tgt_view = sampled_batch[0]
+        
+        # shape: batch, num_source*ch, h, w
+        src_views = torch.cat((sampled_batch[1], sampled_batch[2]), 1)
+        
+        # shape: batch, 3, 3
+        intrinsics = k  # [b, 4, 4]
+        
+        # The images here are integral (0-255)
+        # shape: batch, 3, h, w
+        self.tgt_view = tgt_view.to(self.device).float()
+        self.tgt_view *= 1./255.
+        self.tgt_view = self.tgt_view*2. - 1.
+        
+        self.src_views = src_views.to(self.device).float()
+        self.src_views *= 1./255.
+        self.src_views = self.src_views*2. - 1.
+        #print(self.src_views, self.tgt_view)
+        
+        self.intrinsics = intrinsics.to(self.device).float()
+        # shape: b*src_views,3,h,w
+        self.src_views_concat = torch.cat([
+            self.src_views[:, 3*s:3*(s + 1), :, :]
+            for s in range(args.num_source)
+        ], dim=0)
+        
+
+        #shape:  #scale, #batch, h,w, ch
+        self.tgt_view_pyramid = net_utils.scale_pyramid(self.tgt_view, self.num_scales)
+                
+        #shape:  #scale, #batch*#src_views, #chnls,h,w
+        self.tgt_view_tile_pyramid = [
+            self.tgt_view_pyramid[scale].repeat(args.num_source, 1, 1, 1)
+            for scale in range(self.num_scales)
+        ]
+
+        #shape: scales, b*src_views, h, w, ch
+        self.src_views_pyramid = net_utils.scale_pyramid(self.src_views_concat,
+                                               self.num_scales)
+
+        # output multiple disparity prediction
+        self.multi_scale_intrinsices = net_utils.compute_multi_scale_intrinsics(
+            self.intrinsics, self.num_scales)
 
     def predict_poses(self, inputs, features):
         """Predict poses between input frames for monocular sequences.
         """
         outputs = {}
-        from ipdb import set_trace 
-        set_trace()
+        # from ipdb import set_trace 
+        # set_trace()
         # In this setting, we compute the pose to each source frame via a
         # separate forward pass through the pose network.
         pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}  # keys: 0,-1,1
@@ -331,13 +390,15 @@ class Trainer:
 
         return outputs
 
-    def build_rigid_warp_flow(self):
+    def build_rigid_warp_flow(self, poses, pred_depth):
         global n_iter
         # NOTE: this should be a python list,
         # since the sizes of different level of the pyramid are not same
         """
         Uses self.poses and self.depth, computed through build_posenet() and build_dispnet(), respectively
         """
+        from ipdb import set_trace
+        set_trace()
         args = self.opt
         self.fwd_rigid_flow_pyramid = []
         self.bwd_rigid_flow_pyramid = []
@@ -352,16 +413,17 @@ class Trainer:
                                 
                 # (4, h, w, 2) for each particular scale
                 fwd_rigid_flow = net_utils.compute_rigid_flow( # Checks out
-                    self.poses[:, src, :],
-                    self.depth[scale][:args.batch_size, :, :], #the first disparity
+                    poses[:, src, :],
+                    torch.squeeze(pred_depth[scale]), #the first disparity
                     self.multi_scale_intrinsices[:, scale, :, :], False)
         
                 # (4, h, w, 2)
                 bwd_rigid_flow = net_utils.compute_rigid_flow(
-                    self.poses[:, src, :],
-                    self.depth[scale][args.batch_size * (
-                        src + 1):args.batch_size * (src + 2), :, :],
-                    self.multi_scale_intrinsices[:, scale, :, :], True)
+                    poses[:, src, :],
+                    pred_depth[scale][args.batch_size * (
+                        src + 1):args.batch_size * (src + 2), :, :],  
+                    self.multi_scale_intrinsices[:, scale, :, :], True) 
+                # pred_depth?
                 
                 if not src:
                     fwd_rigid_flow_cat = fwd_rigid_flow

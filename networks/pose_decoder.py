@@ -26,8 +26,8 @@ class PoseDecoder(nn.Module):
         self.net = nn.ModuleList(list(self.convs.values()))
 
     def forward(self, input_features):
-        from ipdb import set_trace 
-        set_trace()
+        # from ipdb import set_trace 
+        # set_trace()
         last_features = [f[-1] for f in input_features]  # len=1 [4,512,6,20]
 
         cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]  # [4,256,6,20]
