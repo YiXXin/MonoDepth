@@ -41,7 +41,7 @@ class PoseDecoder(nn.Module):
 
         out = out.mean(3).mean(2)  # [4,12,6,20] -> [4,12]
 
-        out = 0.01 * out.view(-1, self.num_frames_to_predict_for, 1, 6)
+        out = 0.01 * out.view(-1, self.num_frames_to_predict_for, 1, 6)  # [4,2,1,6]
 
         axisangle = out[..., :3]
         translation = out[..., 3:]

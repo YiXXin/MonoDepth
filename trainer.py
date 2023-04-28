@@ -286,24 +286,28 @@ class Trainer:
 
         data = [inputs[("color_aug", 0, 0)], inputs[("color_aug", -1, 0)], inputs[("color_aug", 1, 0)]]
         self.iter_data_preparation(data, inputs[("K",0)])
-        # from ipdb import set_trace 
-        # set_trace()
+        from ipdb import set_trace 
+        set_trace()
+        pred_depth = []
         if not self.opt.use_flow:
-        # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
-            features = self.models["encoder"](inputs["color_aug", 0, 0])
-        # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
-            outputs = self.models["depth"](features)
-        # outputs[('disp', 3)]: [6, 1, 24, 80], outputs[('disp', 2)]: [6, 1, 48, 160], outputs[('disp', 1)]:[6, 1, 96, 320], outputs[('disp', 0)]: [6, 1, 192, 640]
+            for input in data:
+            # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
+                features = self.models["encoder"](input)
+            # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
+                outputs = self.models["depth"](features)
+            # outputs[('disp', 3)]: [6, 1, 24, 80], outputs[('disp', 2)]: [6, 1, 48, 160], outputs[('disp', 1)]:[6, 1, 96, 320], outputs[('disp', 0)]: [6, 1, 192, 640]
+                pred_depth.append(outputs)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
 
         outputs.update(self.predict_poses(inputs, features))
+        outputs["pose"] = torch.stack((outputs["pose", -1], outputs["pose", 1]),1)
 
         self.generate_images_pred(inputs, outputs)
 
-        pred_depth = [outputs[('disp', 0)], outputs[('disp', 1)], outputs[('disp', 2)], outputs[('disp', 3)]]
-        self.build_rigid_warp_flow(outputs[('pose',-1)], pred_depth)
+        # pred_depth = [outputs[('disp', 0)], outputs[('disp', 1)], outputs[('disp', 2)], outputs[('disp', 3)]]
+        self.build_rigid_warp_flow(outputs["pose"], pred_depth)
 
         losses = self.compute_losses(inputs, outputs)
 
@@ -311,8 +315,8 @@ class Trainer:
 
     def iter_data_preparation(self, sampled_batch, k):
         args = self.opt
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         # sampled_batch: tgt_view, src_views, intrinsics
         
         # shape: batch, ch, h,w
@@ -378,9 +382,10 @@ class Trainer:
                 pose_inputs = [pose_feats[0], pose_feats[f_i]]
 
             pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
+            # pose_inputs[0][0]: [4,64,96,320], pose_inputs[0][1]: [4, 64, 48, 160], pose_inputs[0][2]: [4, 128, 24, 80], pose_inputs[0][3]: [4, 256, 12, 40], pose_inputs[0][4]: [4, 512, 6, 20]
 
             axisangle, translation = self.models["pose"](pose_inputs) # [4,2,1,3]
-            outputs["pose", f_i] = torch.cat((torch.squeeze(axisangle),torch.squeeze(translation)),2)
+            outputs["pose", f_i] = torch.cat((torch.squeeze(axisangle[:, 0]),torch.squeeze(translation[:, 0])),1)  # [4,6]
             outputs[("axisangle", 0, f_i)] = axisangle
             outputs[("translation", 0, f_i)] = translation
 
@@ -397,8 +402,8 @@ class Trainer:
         """
         Uses self.poses and self.depth, computed through build_posenet() and build_dispnet(), respectively
         """
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         args = self.opt
         self.fwd_rigid_flow_pyramid = []
         self.bwd_rigid_flow_pyramid = []
@@ -414,14 +419,13 @@ class Trainer:
                 # (4, h, w, 2) for each particular scale
                 fwd_rigid_flow = net_utils.compute_rigid_flow( # Checks out
                     poses[:, src, :],
-                    torch.squeeze(pred_depth[scale]), #the first disparity
+                    torch.squeeze(pred_depth[0][('disp', scale)]), #the first disparity
                     self.multi_scale_intrinsices[:, scale, :, :], False)
         
                 # (4, h, w, 2)
                 bwd_rigid_flow = net_utils.compute_rigid_flow(
                     poses[:, src, :],
-                    pred_depth[scale][args.batch_size * (
-                        src + 1):args.batch_size * (src + 2), :, :],  
+                    torch.squeeze(pred_depth[src+1][('disp', scale)]),  
                     self.multi_scale_intrinsices[:, scale, :, :], True) 
                 # pred_depth?
                 
