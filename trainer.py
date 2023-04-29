@@ -286,8 +286,8 @@ class Trainer:
 
         data = [inputs[("color_aug", 0, 0)], inputs[("color_aug", -1, 0)], inputs[("color_aug", 1, 0)]]
         self.iter_data_preparation(data, inputs[("K",0)])
-        from ipdb import set_trace 
-        set_trace()
+        # from ipdb import set_trace 
+        # set_trace()
         pred_depth = []
         if not self.opt.use_flow:
             for input in data:
@@ -301,6 +301,8 @@ class Trainer:
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
 
+        from ipdb import set_trace 
+        set_trace()
         outputs.update(self.predict_poses(inputs, features))
         outputs["pose"] = torch.stack((outputs["pose", -1], outputs["pose", 1]),1)
 
@@ -396,14 +398,14 @@ class Trainer:
         return outputs
 
     def build_rigid_warp_flow(self, poses, pred_depth):
-        global n_iter
+        # global n_iter
         # NOTE: this should be a python list,
         # since the sizes of different level of the pyramid are not same
         """
         Uses self.poses and self.depth, computed through build_posenet() and build_dispnet(), respectively
         """
-        # from ipdb import set_trace
-        # set_trace()
+        from ipdb import set_trace
+        set_trace()
         args = self.opt
         self.fwd_rigid_flow_pyramid = []
         self.bwd_rigid_flow_pyramid = []
@@ -444,63 +446,64 @@ class Trainer:
             self.bwd_rigid_flow_pyramid.append(bwd_rigid_flow_cat)
 
         #After the outer loop runs: fwd_rigid_flow_pyramid: (scales, b*src_imgs, h, w, 2) like (4, 8, h, w, 2)
-        
+        from ipdb import set_trace
+        set_trace()
         self.fwd_rigid_warp_pyramid = [
             net_utils.flow_warp(self.src_views_pyramid[scale],
                       self.fwd_rigid_flow_pyramid[scale])
-            for scale in range(args.num_scales)
+            for scale in range(self.num_scales)
         ]
-                
+        # self.fwd_rigid_warp_pyramid[0]: [8, 192, 640, 3]
 #         print(self.fwd_rigid_warp_pyramid[0].shape, self.fwd_rigid_warp_pyramid) - different
 #         print(self.tmp_pyramid[0].shape, self.tmp_pyramid)
         
         self.bwd_rigid_warp_pyramid = [
             net_utils.flow_warp(self.tgt_view_tile_pyramid[scale],
                       self.bwd_rigid_flow_pyramid[scale])
-            for scale in range(args.num_scales)
+            for scale in range(self.num_scales)
         ]
 
         #print(len(self.fwd_rigid_warp_pyramid), " ", self.fwd_rigid_warp_pyramid[0].size())
         #fwd_rigid_warp_pyramid: (8,128,416,3), (8,64,208,3), (8,32,104,3), (8,16,52,3)
         
-        if n_iter % 10000 == 0:
-            for j in range(len(self.fwd_rigid_warp_pyramid)):
-                x = self.fwd_rigid_warp_pyramid[j].permute(0, 3, 1, 2)
-                x = (x - torch.min(x))/(torch.max(x)-torch.min(x))
-                self.tensorboard_writer.add_images('fwd_rigid_warp_scale' + str(j), x, n_iter)
+        # if n_iter % 10000 == 0:
+        #     for j in range(len(self.fwd_rigid_warp_pyramid)):
+        #         x = self.fwd_rigid_warp_pyramid[j].permute(0, 3, 1, 2)
+        #         x = (x - torch.min(x))/(torch.max(x)-torch.min(x))
+        #         self.tensorboard_writer.add_images('fwd_rigid_warp_scale' + str(j), x, n_iter)
  
-            for j in range(len(self.bwd_rigid_warp_pyramid)):
-                x = self.fwd_rigid_warp_pyramid[j].permute(0, 3, 1, 2)
-                x = (x - torch.min(x))/(torch.max(x)-torch.min(x))
-                self.tensorboard_writer.add_images('bwd_rigid_warp_scale' + str(j), x, n_iter)
+        #     for j in range(len(self.bwd_rigid_warp_pyramid)):
+        #         x = self.fwd_rigid_warp_pyramid[j].permute(0, 3, 1, 2)
+        #         x = (x - torch.min(x))/(torch.max(x)-torch.min(x))
+        #         self.tensorboard_writer.add_images('bwd_rigid_warp_scale' + str(j), x, n_iter)
 
         self.fwd_rigid_error_pyramid = [
-            self.image_similarity(args.simi_alpha,
+            net_utils.image_similarity(args.simi_alpha,
                              self.tgt_view_tile_pyramid[scale],
                              self.fwd_rigid_warp_pyramid[scale])
-            for scale in range(args.num_scales)
+            for scale in range(self.num_scales)
         ]
         self.bwd_rigid_error_pyramid = [
-            self.image_similarity(args.simi_alpha, self.src_views_pyramid[scale],
+            net_utils.image_similarity(args.simi_alpha, self.src_views_pyramid[scale],
                              self.bwd_rigid_warp_pyramid[scale])
-            for scale in range(args.num_scales)
+            for scale in range(self.num_scales)
         ]
         
-        if n_iter % 10000 == 0:
-            self.fwd_rigid_error_scale=[]
-            self.bwd_rigid_error_scale=[]
-            #fwd_rigid_error_pyramid[0]: (8, 3, 128, 416)
+        # if n_iter % 10000 == 0:
+        #     self.fwd_rigid_error_scale=[]
+        #     self.bwd_rigid_error_scale=[]
+        #     #fwd_rigid_error_pyramid[0]: (8, 3, 128, 416)
 
-            for j in range(len(self.fwd_rigid_error_pyramid)):
-                tmp=torch.mean(self.fwd_rigid_error_pyramid[j].permute(0, 3, 1, 2), dim=1, keepdim=True)
-                #tmp: (8, 1, 128, 416) in 1st iteration
-                self.tensorboard_writer.add_images('fwd_rigid_error_scale' + str(j), tmp, n_iter)
-                self.fwd_rigid_error_scale.append(tmp)
+        #     for j in range(len(self.fwd_rigid_error_pyramid)):
+        #         tmp=torch.mean(self.fwd_rigid_error_pyramid[j].permute(0, 3, 1, 2), dim=1, keepdim=True)
+        #         #tmp: (8, 1, 128, 416) in 1st iteration
+        #         self.tensorboard_writer.add_images('fwd_rigid_error_scale' + str(j), tmp, n_iter)
+        #         self.fwd_rigid_error_scale.append(tmp)
 
-            for j in range(len(self.bwd_rigid_error_pyramid)):
-                tmp=torch.mean(self.bwd_rigid_error_pyramid[j].permute(0, 3, 1, 2), dim=1, keepdim=True)
-                self.tensorboard_writer.add_images('bwd_rigid_error_scale' + str(j), tmp, n_iter)
-                self.bwd_rigid_error_scale.append(tmp)
+        #     for j in range(len(self.bwd_rigid_error_pyramid)):
+        #         tmp=torch.mean(self.bwd_rigid_error_pyramid[j].permute(0, 3, 1, 2), dim=1, keepdim=True)
+        #         self.tensorboard_writer.add_images('bwd_rigid_error_scale' + str(j), tmp, n_iter)
+        #         self.bwd_rigid_error_scale.append(tmp)
 
     def val(self):
         """Validate the model on a single minibatch
@@ -569,7 +572,7 @@ class Trainer:
         abs_diff = torch.abs(target - pred)
         l1_loss = abs_diff.mean(1, True)
 
-        if self.opt.no_ssim:
+        if self.opt.no_ssim:  # False
             reprojection_loss = l1_loss
         else:
             ssim_loss = self.ssim(pred, target).mean(1, True)
@@ -587,7 +590,7 @@ class Trainer:
             loss = 0
             reprojection_losses = []
 
-            if self.opt.v1_multiscale:
+            if self.opt.v1_multiscale:  # False
                 source_scale = scale
             else:
                 source_scale = 0
@@ -596,28 +599,28 @@ class Trainer:
             color = inputs[("color", 0, scale)]
             target = inputs[("color", 0, source_scale)]
 
-            for frame_id in self.opt.frame_ids[1:]:
+            for frame_id in self.opt.frame_ids[1:]:  # [-1, 1]
                 pred = outputs[("color", frame_id, scale)]
-                reprojection_losses.append(self.compute_reprojection_loss(pred, target))
+                reprojection_losses.append(self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
 
-            reprojection_losses = torch.cat(reprojection_losses, 1)
+            reprojection_losses = torch.cat(reprojection_losses, 1)  # [4,2,192,640]
 
-            if not self.opt.disable_automasking:
+            if not self.opt.disable_automasking: # False
                 identity_reprojection_losses = []
                 for frame_id in self.opt.frame_ids[1:]:
                     pred = inputs[("color", frame_id, source_scale)]
                     identity_reprojection_losses.append(
-                        self.compute_reprojection_loss(pred, target))
+                        self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
 
-                identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1)
+                identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1) # [4,2,192,640]
 
-                if self.opt.avg_reprojection:
+                if self.opt.avg_reprojection:  # False
                     identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
                 else:
                     # save both images, and do min all at once below
-                    identity_reprojection_loss = identity_reprojection_losses
+                    identity_reprojection_loss = identity_reprojection_losses # [4,2,192,640]
 
-            elif self.opt.predictive_mask:
+            elif self.opt.predictive_mask:  # False
                 # use the predicted mask
                 mask = outputs["predictive_mask"]["disp", scale]
                 if not self.opt.v1_multiscale:
@@ -631,30 +634,30 @@ class Trainer:
                 weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
                 loss = loss + weighting_loss.mean()
 
-            if self.opt.avg_reprojection:
+            if self.opt.avg_reprojection:  # False
                 reprojection_loss = reprojection_losses.mean(1, keepdim=True)
             else:
-                reprojection_loss = reprojection_losses
+                reprojection_loss = reprojection_losses  # [4,2,192,640]
 
-            if not self.opt.disable_automasking:
+            if not self.opt.disable_automasking:  # False
                 # add random numbers to break ties
                 identity_reprojection_loss += torch.randn(
-                    identity_reprojection_loss.shape).cuda() * 0.00001
+                    identity_reprojection_loss.shape).cuda() * 0.00001    # [4,2,192,640]
 
-                combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
+                combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)   # [4,4,192,640]
             else:
                 combined = reprojection_loss
 
             if combined.shape[1] == 1:
                 to_optimise = combined
-            else:
-                to_optimise, idxs = torch.min(combined, dim=1)
+            else:  # this
+                to_optimise, idxs = torch.min(combined, dim=1)  # [4,192,640], [4,192,640]
 
-            if not self.opt.disable_automasking:
+            if not self.opt.disable_automasking:  # False
                 outputs["identity_selection/{}".format(scale)] = (
-                        idxs > identity_reprojection_loss.shape[1] - 1).float()
+                        idxs > identity_reprojection_loss.shape[1] - 1).float()  # what's this
 
-            loss = loss + to_optimise.mean()
+            loss = loss + to_optimise.mean()  # 0+
 
             mean_disp = disp.mean(2, True).mean(3, True)
             norm_disp = disp / (mean_disp + 1e-7)
@@ -703,9 +706,6 @@ class Trainer:
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
 
-    def image_similarity(alpha,x,y):
-    # print('alpha*DSSIM(x,y): {:.16f}\n torch.abs(x-y): {:.16f}'.format(torch.mean(alpha*DSSIM(x,y)),torch.mean((1-alpha)*torch.abs(x-y))))
-        return alpha * net_utils.DSSIM(x,y) + (1-alpha) * torch.abs(x - y)
 
     def log_time(self, batch_idx, duration, loss):
         """Print a logging statement to the terminal

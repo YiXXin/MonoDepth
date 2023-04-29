@@ -84,6 +84,10 @@ class MonodepthOptions:
                                  type=int,
                                  help="frames to load",
                                  default=[0, -1, 1])
+        self.parser.add_argument("--simi_alpha",
+                                 type=float,
+                                 help="alpha weight between SSIM and L1 in reconstruction loss",
+                                 default=0.85)
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",
