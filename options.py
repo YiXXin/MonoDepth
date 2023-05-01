@@ -25,7 +25,7 @@ class MonodepthOptions:
         self.parser.add_argument("--use_flow",
                                  type=bool,
                                  help="whether training with flow",
-                                 default=False)
+                                 default=True)
         self.parser.add_argument("--depth_encoder",
                                  type=str,
                                  help="the model to extract features for depth",
@@ -88,6 +88,10 @@ class MonodepthOptions:
                                  type=float,
                                  help="alpha weight between SSIM and L1 in reconstruction loss",
                                  default=0.85)
+        self.parser.add_argument("--loss_weight_rigid_warp",
+                                 type=float,
+                                 help="weight for warping by rigid flow",
+                                 default=1.0)
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",
@@ -151,8 +155,8 @@ class MonodepthOptions:
         # LOGGING options
         self.parser.add_argument("--log_frequency",
                                  type=int,
-                                 help="number of batches between each tensorboard log",
-                                 default=100)
+                                 help="number of batches between each log",
+                                 default=250)
         self.parser.add_argument("--save_frequency",
                                  type=int,
                                  help="number of epochs between each save",

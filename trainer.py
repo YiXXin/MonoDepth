@@ -132,7 +132,7 @@ class Trainer:
         else:
             self.models["encoder"] = networks.ResnetEncoder(self.opt.num_layers, self.opt.weights_init == "pretrained")
 
-            self.models["depth"] = networks.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
+            self.models["depth"] = depth_decoder.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
 
             # self.models["flow"] = 
 
@@ -264,16 +264,17 @@ class Trainer:
             duration = time.time() - before_op_time
 
             # log less frequently after the first 2000 steps to save time & disk space
-            early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 2000
-            late_phase = self.step % 2000 == 0
+            # early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 2000
+            # late_phase = self.step % 2000 == 0
 
-            if early_phase or late_phase:
+            if self.step % self.opt.log_frequency == 0:
+            # if early_phase or late_phase:
                 self.log_time(batch_idx, duration, losses["loss"].cpu().data)
 
                 if "depth_gt" in inputs:  # [6, 1, 375, 1242]
                     self.compute_depth_losses(inputs, outputs, losses)
 
-                self.log("train", inputs, outputs, losses)  # what's this
+                # self.log("train", inputs, outputs, losses)  # what's this
                 self.val()
 
             self.step = self.step + 1
@@ -284,32 +285,36 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
 
-        data = [inputs[("color_aug", 0, 0)], inputs[("color_aug", -1, 0)], inputs[("color_aug", 1, 0)]]
-        self.iter_data_preparation(data, inputs[("K",0)])
-        # from ipdb import set_trace 
-        # set_trace()
-        pred_depth = []
-        if not self.opt.use_flow:
+        if self.opt.use_flow:
+            data = [inputs[("color_aug", 0, 0)], inputs[("color_aug", -1, 0)], inputs[("color_aug", 1, 0)]]
+            self.iter_data_preparation(data, inputs[("K",0)])
+            # from ipdb import set_trace 
+            # set_trace()
+            pred_depth = []
             for input in data:
-            # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
+                # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
                 features = self.models["encoder"](input)
-            # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
+                # features[0]: [6, 64, 96, 320], features[1]: [6, 128, 48, 160], features[2]: [6, 256, 24, 80], features[3]: [6, 512, 12, 40]
                 outputs = self.models["depth"](features)
-            # outputs[('disp', 3)]: [6, 1, 24, 80], outputs[('disp', 2)]: [6, 1, 48, 160], outputs[('disp', 1)]:[6, 1, 96, 320], outputs[('disp', 0)]: [6, 1, 192, 640]
+                # outputs[('disp', 3)]: [6, 1, 24, 80], outputs[('disp', 2)]: [6, 1, 48, 160], outputs[('disp', 1)]:[6, 1, 96, 320], outputs[('disp', 0)]: [6, 1, 192, 640]
                 pred_depth.append(outputs)
+        else:
+            features = self.models["encoder"](inputs["color_aug", 0, 0])
+            outputs = self.models["depth"](features)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
 
-        from ipdb import set_trace 
-        set_trace()
+        # from ipdb import set_trace 
+        # set_trace()
         outputs.update(self.predict_poses(inputs, features))
         outputs["pose"] = torch.stack((outputs["pose", -1], outputs["pose", 1]),1)
 
         self.generate_images_pred(inputs, outputs)
 
         # pred_depth = [outputs[('disp', 0)], outputs[('disp', 1)], outputs[('disp', 2)], outputs[('disp', 3)]]
-        self.build_rigid_warp_flow(outputs["pose"], pred_depth)
+        if self.opt.use_flow:
+            self.build_rigid_warp_flow(outputs["pose"], pred_depth)
 
         losses = self.compute_losses(inputs, outputs)
 
@@ -404,8 +409,8 @@ class Trainer:
         """
         Uses self.poses and self.depth, computed through build_posenet() and build_dispnet(), respectively
         """
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         args = self.opt
         self.fwd_rigid_flow_pyramid = []
         self.bwd_rigid_flow_pyramid = []
@@ -446,8 +451,8 @@ class Trainer:
             self.bwd_rigid_flow_pyramid.append(bwd_rigid_flow_cat)
 
         #After the outer loop runs: fwd_rigid_flow_pyramid: (scales, b*src_imgs, h, w, 2) like (4, 8, h, w, 2)
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         self.fwd_rigid_warp_pyramid = [
             net_utils.flow_warp(self.src_views_pyramid[scale],
                       self.fwd_rigid_flow_pyramid[scale])
@@ -521,7 +526,7 @@ class Trainer:
             if "depth_gt" in inputs:
                 self.compute_depth_losses(inputs, outputs, losses)
 
-            self.log("val", inputs, outputs, losses)
+            # self.log("val", inputs, outputs, losses)
             del inputs, outputs, losses
 
         self.set_train()
@@ -585,80 +590,91 @@ class Trainer:
         """
         losses = {}
         total_loss = 0
+        loss = 0
 
         for scale in self.opt.scales:
-            loss = 0
-            reprojection_losses = []
+            if not self.opt.use_flow:
 
-            if self.opt.v1_multiscale:  # False
-                source_scale = scale
+                reprojection_losses = []
+
+                if self.opt.v1_multiscale:  # False
+                    source_scale = scale
+                else:
+                    source_scale = 0
+
+                disp = outputs[("disp", scale)]
+                color = inputs[("color", 0, scale)]
+                target = inputs[("color", 0, source_scale)]
+
+                for frame_id in self.opt.frame_ids[1:]:  # [-1, 1]
+                    pred = outputs[("color", frame_id, scale)]
+                    reprojection_losses.append(self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
+
+                reprojection_losses = torch.cat(reprojection_losses, 1)  # [4,2,192,640]
+
+                if not self.opt.disable_automasking: # False
+                    identity_reprojection_losses = []
+                    for frame_id in self.opt.frame_ids[1:]:
+                        pred = inputs[("color", frame_id, source_scale)]
+                        identity_reprojection_losses.append(
+                            self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
+
+                    identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1) # [4,2,192,640]
+
+                    if self.opt.avg_reprojection:  # False
+                        identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
+                    else:
+                        # save both images, and do min all at once below
+                        identity_reprojection_loss = identity_reprojection_losses # [4,2,192,640]
+
+                elif self.opt.predictive_mask:  # False
+                    # use the predicted mask
+                    mask = outputs["predictive_mask"]["disp", scale]
+                    if not self.opt.v1_multiscale:
+                        mask = F.interpolate(
+                            mask, [self.opt.height, self.opt.width],
+                            mode="bilinear", align_corners=False)
+
+                    reprojection_losses *= mask
+
+                    # add a loss pushing mask to 1 (using nn.BCELoss for stability)
+                    weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
+                    loss = loss + weighting_loss.mean()
+
+                if self.opt.avg_reprojection:  # False
+                    reprojection_loss = reprojection_losses.mean(1, keepdim=True)
+                else:
+                    reprojection_loss = reprojection_losses  # [4,2,192,640]
+
+                if not self.opt.disable_automasking:  # False
+                    # add random numbers to break ties
+                    identity_reprojection_loss += torch.randn(
+                        identity_reprojection_loss.shape).cuda() * 0.00001    # [4,2,192,640]
+
+                    combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)   # [4,4,192,640]
+                else:
+                    combined = reprojection_loss
+
+                if combined.shape[1] == 1:
+                    to_optimise = combined
+                else:  # this
+                    to_optimise, idxs = torch.min(combined, dim=1)  # [4,192,640], [4,192,640]
+
+                if not self.opt.disable_automasking:  # False
+                    outputs["identity_selection/{}".format(scale)] = (
+                            idxs > identity_reprojection_loss.shape[1] - 1).float()  # what's this
+
+                loss = loss + to_optimise.mean()  # 0+
+
             else:
-                source_scale = 0
+                reproj_loss = self.opt.loss_weight_rigid_warp *\
+                self.opt.num_source/2*(
+                    torch.mean(self.fwd_rigid_error_pyramid[scale]) +
+                    torch.mean(self.bwd_rigid_error_pyramid[scale]))
+                loss = loss + reproj_loss
 
             disp = outputs[("disp", scale)]
             color = inputs[("color", 0, scale)]
-            target = inputs[("color", 0, source_scale)]
-
-            for frame_id in self.opt.frame_ids[1:]:  # [-1, 1]
-                pred = outputs[("color", frame_id, scale)]
-                reprojection_losses.append(self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
-
-            reprojection_losses = torch.cat(reprojection_losses, 1)  # [4,2,192,640]
-
-            if not self.opt.disable_automasking: # False
-                identity_reprojection_losses = []
-                for frame_id in self.opt.frame_ids[1:]:
-                    pred = inputs[("color", frame_id, source_scale)]
-                    identity_reprojection_losses.append(
-                        self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
-
-                identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1) # [4,2,192,640]
-
-                if self.opt.avg_reprojection:  # False
-                    identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
-                else:
-                    # save both images, and do min all at once below
-                    identity_reprojection_loss = identity_reprojection_losses # [4,2,192,640]
-
-            elif self.opt.predictive_mask:  # False
-                # use the predicted mask
-                mask = outputs["predictive_mask"]["disp", scale]
-                if not self.opt.v1_multiscale:
-                    mask = F.interpolate(
-                        mask, [self.opt.height, self.opt.width],
-                        mode="bilinear", align_corners=False)
-
-                reprojection_losses *= mask
-
-                # add a loss pushing mask to 1 (using nn.BCELoss for stability)
-                weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
-                loss = loss + weighting_loss.mean()
-
-            if self.opt.avg_reprojection:  # False
-                reprojection_loss = reprojection_losses.mean(1, keepdim=True)
-            else:
-                reprojection_loss = reprojection_losses  # [4,2,192,640]
-
-            if not self.opt.disable_automasking:  # False
-                # add random numbers to break ties
-                identity_reprojection_loss += torch.randn(
-                    identity_reprojection_loss.shape).cuda() * 0.00001    # [4,2,192,640]
-
-                combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)   # [4,4,192,640]
-            else:
-                combined = reprojection_loss
-
-            if combined.shape[1] == 1:
-                to_optimise = combined
-            else:  # this
-                to_optimise, idxs = torch.min(combined, dim=1)  # [4,192,640], [4,192,640]
-
-            if not self.opt.disable_automasking:  # False
-                outputs["identity_selection/{}".format(scale)] = (
-                        idxs > identity_reprojection_loss.shape[1] - 1).float()  # what's this
-
-            loss = loss + to_optimise.mean()  # 0+
-
             mean_disp = disp.mean(2, True).mean(3, True)
             norm_disp = disp / (mean_disp + 1e-7)
             smooth_loss = get_smooth_loss(norm_disp, color)
@@ -716,8 +732,10 @@ class Trainer:
                                      self.num_total_steps / self.step - 1.0) * time_sofar if self.step > 0 else 0
         print_string = "epoch {:>3} | batch {:>6} | examples/s: {:5.1f}" + \
                        " | loss: {:.5f} | time elapsed: {} | time left: {}"
-        print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss,
+        self._log.info(print_string.format(self.epoch, batch_idx, samples_per_sec, loss,
                                   sec_to_hm_str(time_sofar), sec_to_hm_str(training_time_left)))
+        # print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss,
+        #                           sec_to_hm_str(time_sofar), sec_to_hm_str(training_time_left)))
 
     def log(self, mode, inputs, outputs, losses):
         """Write an event to the tensorboard events file
@@ -767,7 +785,7 @@ class Trainer:
     def save_model(self):
         """Save model weights to disk
         """
-        save_folder = os.path.join(self.log_path, "bi_models_0414", "weights_{}".format(self.epoch))
+        save_folder = os.path.join(self.opt.save_root, "models", "weights_{}".format(self.epoch))
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
 
