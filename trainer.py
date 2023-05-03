@@ -20,6 +20,8 @@ from layers import *
 
 from torch import nn
 
+from einops import rearrange
+
 import datasets
 import networks
 from networks import depth_decoder
@@ -134,7 +136,8 @@ class Trainer:
 
             self.models["depth"] = depth_decoder.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
 
-            # self.models["flow"] = 
+            if self.opt.train_flow:
+                self.models["flow"] = 1
 
 
         self.models["encoder"].to(self.device)
@@ -316,7 +319,7 @@ class Trainer:
         if self.opt.use_flow:
             self.build_rigid_warp_flow(outputs["pose"], pred_depth)
 
-        losses = self.compute_losses(inputs, outputs)
+        losses = self.compute_losses(inputs, outputs, pred_depth)
 
         return outputs, losses
 
@@ -585,12 +588,15 @@ class Trainer:
 
         return reprojection_loss
 
-    def compute_losses(self, inputs, outputs):
+    def compute_losses(self, inputs, outputs, pred_depth):
         """Compute the reprojection and smoothness losses for a minibatch
         """
         losses = {}
         total_loss = 0
         loss = 0
+
+        reproj_loss = 0
+        loss_disp_smooth = 0
 
         for scale in self.opt.scales:
             if not self.opt.use_flow:
@@ -666,27 +672,42 @@ class Trainer:
 
                 loss = loss + to_optimise.mean()  # 0+
 
+                disp = outputs[("disp", scale)]
+                color = inputs[("color", 0, scale)]
+                mean_disp = disp.mean(2, True).mean(3, True)
+                norm_disp = disp / (mean_disp + 1e-7)
+                smooth_loss = get_smooth_loss(norm_disp, color)
+
+                loss = loss + self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
+
+                loss = loss*10**(-scale)
+
+                total_loss = total_loss + loss
+                losses["loss/{}".format(scale)] = loss
+
+                
+
             else:
-                reproj_loss = self.opt.loss_weight_rigid_warp *\
+                from ipdb import set_trace
+                set_trace()
+                pred_depth[0][('disp',scale)] = rearrange(pred_depth[0][('disp',scale)], 'b c h w -> b h w c')
+                pred_depth[1][('disp',scale)] = rearrange(pred_depth[1][('disp',scale)], 'b c h w -> b h w c')
+                pred_depth[2][('disp',scale)] = rearrange(pred_depth[2][('disp',scale)], 'b c h w -> b h w c')
+                res = torch.cat((pred_depth[0][('disp',scale)], pred_depth[1][('disp',scale)], pred_depth[2][('disp',scale)]), dim = 0)
+                reproj_loss += self.opt.loss_weight_rigid_warp *\
                 self.opt.num_source/2*(
                     torch.mean(self.fwd_rigid_error_pyramid[scale]) +
                     torch.mean(self.bwd_rigid_error_pyramid[scale]))
-                loss = loss + reproj_loss
 
-            disp = outputs[("disp", scale)]
-            color = inputs[("color", 0, scale)]
-            mean_disp = disp.mean(2, True).mean(3, True)
-            norm_disp = disp / (mean_disp + 1e-7)
-            smooth_loss = get_smooth_loss(norm_disp, color)
+                loss_disp_smooth += self.opt.loss_weight_disparity_smooth/(2**scale) *\
+                net_utils.smooth_loss(res, torch.cat(
+                    (self.tgt_view_pyramid[scale], self.src_views_pyramid[scale]), dim=0))
 
-            loss = loss + self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
 
-            loss = loss*10**(-scale)
-
-            total_loss = total_loss + loss
-            losses["loss/{}".format(scale)] = loss
-
-        total_loss /= (1 + 1e-1 + 1e-2 + 1e-3)
+        if not self.opt.use_flow:
+            total_loss /= (1 + 1e-1 + 1e-2 + 1e-3)
+        else:
+            total_loss = reproj_loss + loss_disp_smooth
 
 
         losses["loss"] = total_loss

@@ -24,8 +24,12 @@ class MonodepthOptions:
         # TRAINING options
         self.parser.add_argument("--use_flow",
                                  type=bool,
-                                 help="whether training with flow",
+                                 help="whether use rigid flow",
                                  default=True)
+        self.parser.add_argument("--train_flow",
+                                 type=bool,
+                                 help="whether training with flow",
+                                 default=False)
         self.parser.add_argument("--depth_encoder",
                                  type=str,
                                  help="the model to extract features for depth",
@@ -54,6 +58,10 @@ class MonodepthOptions:
                                  type=float,
                                  help="disparity smoothness weight",
                                  default=1e-3)
+        self.parser.add_argument("--loss_weight_disparity_smooth",
+                                 type=float,
+                                 help="weight for disp smoothness",
+                                 default=0.5)
         self.parser.add_argument("--scales",
                                  nargs="+",
                                  type=int,

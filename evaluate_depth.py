@@ -13,6 +13,8 @@ from options import MonodepthOptions
 import datasets
 import networks
 from networks import bi_encoder
+from networks import depth_decoder
+
 
 
 cv2.setNumThreads(0)  # This speeds up evaluation 5x on our unix systems (OpenCV 3.3.1)
@@ -89,19 +91,24 @@ def evaluate(opt):
                                            [0], 4, is_train=False)
         dataloader = DataLoader(dataset, 1, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
-
+        num_layers = 18
+        scales = [0, 1, 2, 3]
 
         norm_cfg = dict(type='BN', requires_grad=True)
-        encoder = bi_encoder.biformer_tiny()
+        encoder = networks.ResnetEncoder(num_layers, "pretrained")
+        # encoder = bi_encoder.biformer_tiny()
         # encoder = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
-        depth_decoder = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
-                                                channels=128,
-                                                dropout_ratio=0.1,
-                                                num_classes=1,
-                                                norm_cfg=norm_cfg,
-                                                align_corners=False)
+        # depth_decod = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
+        #                                         channels=128,
+        #                                         dropout_ratio=0.1,
+        #                                         num_classes=1,
+        #                                         norm_cfg=norm_cfg,
+        #                                         align_corners=False)
+        
+        depth_decod = depth_decoder.DepthDecoder(encoder.num_ch_enc, scales)
 
-        print('Model Param:%d' % (count_parameters(encoder) + count_parameters(depth_decoder)))
+
+        print('Model Param:%d' % (count_parameters(encoder) + count_parameters(depth_decod)))
 
 
         print('Model Built!')
@@ -109,14 +116,14 @@ def evaluate(opt):
         model_dict = encoder.state_dict()
 
         encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
-        depth_decoder.load_state_dict(torch.load(decoder_path))
+        depth_decod.load_state_dict(torch.load(decoder_path))
 
         print('Pretrained Model loaded!')
 
         encoder.cuda()
         encoder.eval()
-        depth_decoder.cuda()
-        depth_decoder.eval()
+        depth_decod.cuda()
+        depth_decod.eval()
 
         pred_disps = []
 
@@ -131,7 +138,7 @@ def evaluate(opt):
                     # Post-processed results require each image to have two forward passes
                     input_color = torch.cat((input_color, torch.flip(input_color, [3])), 0)
 
-                output = depth_decoder(encoder(input_color))
+                output = depth_decod(encoder(input_color))
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], opt.min_depth, opt.max_depth)
                 pred_disp = pred_disp.cpu()[:, 0].numpy()
