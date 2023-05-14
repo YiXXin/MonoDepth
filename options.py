@@ -25,11 +25,11 @@ class MonodepthOptions:
         self.parser.add_argument("--use_flow",
                                  type=bool,
                                  help="whether use rigid flow",
-                                 default=True)
+                                 default=False)
         self.parser.add_argument("--train_flow",
                                  type=bool,
                                  help="whether training with flow",
-                                 default=False)
+                                 default=True)
         self.parser.add_argument("--depth_encoder",
                                  type=str,
                                  help="the model to extract features for depth",
@@ -100,6 +100,38 @@ class MonodepthOptions:
                                  type=float,
                                  help="weight for warping by rigid flow",
                                  default=1.0)
+
+        # flow options
+        self.parser.add_argument("--n_frames",
+                                 type=int,
+                                 help="number of frames for flow",
+                                 default=2)
+        
+        self.parser.add_argument("--upsample",
+                                 type=bool,
+                                 help="whether to upsample the flow",
+                                 default=True)
+
+        self.parser.add_argument("--reduce_dense",
+                                 type=bool,
+                                 help="whether to reduce dense",
+                                 default=True)
+        
+        self.parser.add_argument("--slots_iters",
+                                 type=int,
+                                 help="the iteration of slot attention",
+                                 default=5)
+        
+        self.parser.add_argument("--num_slots",
+                                 type=int,
+                                 help="the slot number",
+                                 default=2)
+        
+        self.parser.add_argument("--in_out_channels",
+                                 type=int,
+                                 help="in out channels",
+                                 default=3)
+
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",

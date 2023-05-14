@@ -86,6 +86,8 @@ The following example command evaluates best weights:
 ```shell
 python evaluate_depth.py --data_path=/YOUR/DATA/PATH --load_weights_folder ./checkpoints/best/
 ```
+/remote-home/share/KITTI/KITTI_fengyi
+
 
 ## Reference
 

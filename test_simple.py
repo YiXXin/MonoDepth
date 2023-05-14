@@ -16,17 +16,22 @@ import networks
 
 import matplotlib.pyplot as plt
 
+from networks import bi_encoder
+from networks import depth_decoder
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Simple testing funtion for H-TF_DCMNet models.')
 
+    # ht_dcmnet/models/weights_39/
+    # ht_dcmnet/outputs/230508/094947/models/weights_39/
+    # ht_dcmnet/outputs/230503/124652/models/weights_39/
     parser.add_argument('--image_path', type=str,
                         help='path to a test image or folder of images',
                         default="./test_images")
-    parser.add_argument('--model_name', type=str,
+    parser.add_argument('--model_path', type=str,
                         help='name of a pretrained model to use',
-                        default="best")
+                        default="ht_dcmnet/outputs/230503/124652/models/weights_39/")
     parser.add_argument('--ext', type=str,
                         help='image extension to search for in folder', default="jpg")
     parser.add_argument("--no_cuda",
@@ -39,7 +44,7 @@ def parse_args():
 def test_simple(args):
     """Function to predict for a single image or folder of images
     """
-    assert args.model_name is not None, \
+    assert args.model_path is not None, \
         "You must specify the --model_name parameter; see README.md for an example"
 
     if torch.cuda.is_available() and not args.no_cuda:
@@ -47,14 +52,19 @@ def test_simple(args):
     else:
         device = torch.device("cpu")
 
-    model_path = os.path.join("./checkpoints/", args.model_name)
+    num_layers = 18
+    scales = [0, 1, 2, 3]
+
+    model_path = os.path.join("./checkpoints/", args.model_path)
     print("-> Loading model from ", model_path)
     encoder_path = os.path.join(model_path, "encoder.pth")
     depth_decoder_path = os.path.join(model_path, "depth.pth")
 
     # LOADING PRETRAINED MODEL
     print("   Loading pretrained encoder")
-    encoder = encoder = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
+    encoder = networks.ResnetEncoder(num_layers, "pretrained")
+    # encoder = encoder = networks.H_Transformer(window_size=4, embed_dim=64, depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32))
+    # encoder = bi_encoder.biformer_tiny()
     loaded_dict_enc = torch.load(encoder_path, map_location=device)
 
     # extract the height and width of image that this model was trained with
@@ -67,19 +77,20 @@ def test_simple(args):
 
     print("   Loading pretrained decoder")
     norm_cfg = dict(type='BN', requires_grad=True)
-    depth_decoder = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
-                                                channels=128,
-                                                dropout_ratio=0.1,
-                                                num_classes=1,
-                                                norm_cfg=norm_cfg,
-                                                align_corners=False)
+    depth_decod = depth_decoder.DepthDecoder(encoder.num_ch_enc, scales)
+    # depth_decod = networks.DCMNet(in_channels=[64, 128, 256, 512], in_index=[0, 1, 2, 3], pool_scales=(1, 2, 3, 6),
+    #                                             channels=128,
+    #                                             dropout_ratio=0.1,
+    #                                             num_classes=1,
+    #                                             norm_cfg=norm_cfg,
+    #                                             align_corners=False)
 
 
     loaded_dict = torch.load(depth_decoder_path, map_location=device)
-    depth_decoder.load_state_dict(loaded_dict)
+    depth_decod.load_state_dict(loaded_dict)
 
-    depth_decoder.to(device)
-    depth_decoder.eval()
+    depth_decod.to(device)
+    depth_decod.eval()
 
     # FINDING INPUT IMAGES
     if os.path.isfile(args.image_path):
@@ -99,6 +110,8 @@ def test_simple(args):
     with torch.no_grad():
         for idx, image_path in enumerate(paths):
 
+            image_idx = str.split(image_path, '/')[2]
+            image_idx = image_idx[0:3]
             if image_path.endswith("_disp.jpg"):
                 # don't try to predict disparity for a disparity image!
                 continue
@@ -112,7 +125,7 @@ def test_simple(args):
             # PREDICTION
             input_image = input_image.to(device)
             features = encoder(input_image)
-            outputs = depth_decoder(features)
+            outputs = depth_decod(features)
 
             disp = outputs[("disp", 0)]
             disp_resized = torch.nn.functional.interpolate(
@@ -127,7 +140,11 @@ def test_simple(args):
 
             plt.imshow(colormapped_im)
             plt.axis('off')
-            plt.show()
+            # plt.show()
+
+            # from ipdb import set_trace
+            # set_trace()
+            plt.savefig('./test_images/{}_unet_disp.jpg'.format(image_idx))
 
     print('-> Done!')
 

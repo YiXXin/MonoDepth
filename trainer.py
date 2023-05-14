@@ -17,6 +17,7 @@ from kitti_utils import *
 from layers import *
 # from networks import *
 
+from torchstat import stat
 
 from torch import nn
 
@@ -27,6 +28,9 @@ import networks
 from networks import depth_decoder
 from networks import bi_encoder
 from networks import net_utils
+from networks.flow_depth import PWCFlow
+
+import utils
 
 
 class Trainer:
@@ -87,6 +91,8 @@ class Trainer:
         # set_trace()
 
         if self.opt.use_flow:
+            _log.info("=> Training depth and rigid flow jointly.")
+        elif self.opt.train_flow:
             _log.info("=> Training depth and optical flow jointly.")
         else:
             _log.info("=> Only training depth.")
@@ -136,8 +142,12 @@ class Trainer:
 
             self.models["depth"] = depth_decoder.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
 
-            if self.opt.train_flow:
-                self.models["flow"] = 1
+        from ipdb import set_trace
+        set_trace()
+        if self.opt.train_flow:
+            self.models["flow"] = PWCFlow(self.opt)
+            self.models["flow"].to(self.device)
+            self.parameters_to_train += list(self.models["flow"].parameters())
 
 
         self.models["encoder"].to(self.device)
@@ -147,7 +157,6 @@ class Trainer:
         self.models["depth"].to(self.device)
         # print(self.models["depth"].parameters())
         self.parameters_to_train += list(self.models["depth"].parameters())
-
 
         self.models["pose_encoder"] = networks.ResnetEncoder(
             18,
@@ -287,13 +296,15 @@ class Trainer:
         """
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
-
+        pred_depth = []
+        from ipdb import set_trace
+        set_trace()
+        # stat(self.models["encoder"], (3, 192, 640))
+        # stat(self.models["depth"], (64, 96, 320))
         if self.opt.use_flow:
             data = [inputs[("color_aug", 0, 0)], inputs[("color_aug", -1, 0)], inputs[("color_aug", 1, 0)]]
             self.iter_data_preparation(data, inputs[("K",0)])
-            # from ipdb import set_trace 
-            # set_trace()
-            pred_depth = []
+            
             for input in data:
                 # inputs["color_aug", 0, 0].shape: [6, 3, 192, 640]
                 features = self.models["encoder"](input)
@@ -304,6 +315,26 @@ class Trainer:
         else:
             features = self.models["encoder"](inputs["color_aug", 0, 0])
             outputs = self.models["depth"](features)
+
+        if self.opt.train_flow:
+            img_pair = torch.cat([inputs[("color_aug", 0, 0)], inputs[("color_aug", 1, 0)]], 1)  # [4, 6, 192, 640]
+            res_dict,  x1_recons, x1_masks, x1_slots, x1_pyramid, pred_flows, pred_flow_from_image = self.models["flow"](img_pair, with_bk=True)
+            flows_12, flows_21 = res_dict['flows_fw'], res_dict['flows_bw']
+            flows = [torch.cat([flo12, flo21], 1) for flo12, flo21 in
+                     zip(flows_12, flows_21)]
+            flow_loss, l_ph, l_sm, flow_mean = self.loss_func(flows, img_pair)
+
+            rec_losses_mask = [utils.charbonnier_loss(gt_flow=flows_12[2], pred_flow=pred_flow, mask=mask) for (pred_flow, mask) in zip(pred_flows['fw'], x1_masks['fw'])]
+            # len(rec_losses)=8, shape=[4]
+            rec_losses = [torch.sum(rec_loss) for rec_loss in rec_losses_mask]  # len = 8
+            num_pixels = torch.tensor(self.cfg.batch_size * flows_12[2].shape[2] * flows_12[2].shape[3], dtype=torch.float32)
+            image_prior_decoder= utils.charbonnier_loss(gt_flow=flows_12[2],
+                                              pred_flow=pred_flow_from_image['fw'],
+                                              mask=torch.ones_like(flows_12[2]))
+            image_prior_decoder = torch.sum(image_prior_decoder)
+            l_rec = (sum(rec_losses) + image_prior_decoder) / num_pixels
+            flow_loss += l_rec
+
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
@@ -318,7 +349,7 @@ class Trainer:
         # pred_depth = [outputs[('disp', 0)], outputs[('disp', 1)], outputs[('disp', 2)], outputs[('disp', 3)]]
         if self.opt.use_flow:
             self.build_rigid_warp_flow(outputs["pose"], pred_depth)
-
+        
         losses = self.compute_losses(inputs, outputs, pred_depth)
 
         return outputs, losses
@@ -685,11 +716,10 @@ class Trainer:
                 total_loss = total_loss + loss
                 losses["loss/{}".format(scale)] = loss
 
-                
 
             else:
-                from ipdb import set_trace
-                set_trace()
+                # from ipdb import set_trace
+                # set_trace()
                 pred_depth[0][('disp',scale)] = rearrange(pred_depth[0][('disp',scale)], 'b c h w -> b h w c')
                 pred_depth[1][('disp',scale)] = rearrange(pred_depth[1][('disp',scale)], 'b c h w -> b h w c')
                 pred_depth[2][('disp',scale)] = rearrange(pred_depth[2][('disp',scale)], 'b c h w -> b h w c')
