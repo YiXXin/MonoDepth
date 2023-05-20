@@ -27,7 +27,7 @@ import datasets
 import networks
 from networks import depth_decoder
 from networks import bi_encoder
-from networks import net_utils
+from networks.utils import net_utils, flow_utils
 from networks.flow_depth import PWCFlow
 
 import utils
@@ -142,8 +142,8 @@ class Trainer:
 
             self.models["depth"] = depth_decoder.DepthDecoder(self.models["encoder"].num_ch_enc, self.opt.scales)
 
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         if self.opt.train_flow:
             self.models["flow"] = PWCFlow(self.opt)
             self.models["flow"].to(self.device)
@@ -297,8 +297,8 @@ class Trainer:
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
         pred_depth = []
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
         # stat(self.models["encoder"], (3, 192, 640))
         # stat(self.models["depth"], (64, 96, 320))
         if self.opt.use_flow:
@@ -316,21 +316,22 @@ class Trainer:
             features = self.models["encoder"](inputs["color_aug", 0, 0])
             outputs = self.models["depth"](features)
 
+        flow_loss = 0
         if self.opt.train_flow:
             img_pair = torch.cat([inputs[("color_aug", 0, 0)], inputs[("color_aug", 1, 0)]], 1)  # [4, 6, 192, 640]
             res_dict,  x1_recons, x1_masks, x1_slots, x1_pyramid, pred_flows, pred_flow_from_image = self.models["flow"](img_pair, with_bk=True)
             flows_12, flows_21 = res_dict['flows_fw'], res_dict['flows_bw']
-            flows = [torch.cat([flo12, flo21], 1) for flo12, flo21 in
-                     zip(flows_12, flows_21)]
-            flow_loss, l_ph, l_sm, flow_mean = self.loss_func(flows, img_pair)
+            flows = [torch.cat([flo12, flo21], 1) for flo12, flo21 in zip(flows_12, flows_21)]
+            
+            flow_compute_loss = flow_utils.unFlowLoss(self.opt)
+            flow_loss, l_ph, l_sm, flow_mean = flow_compute_loss(flows, img_pair)
 
-            rec_losses_mask = [utils.charbonnier_loss(gt_flow=flows_12[2], pred_flow=pred_flow, mask=mask) for (pred_flow, mask) in zip(pred_flows['fw'], x1_masks['fw'])]
-            # len(rec_losses)=8, shape=[4]
-            rec_losses = [torch.sum(rec_loss) for rec_loss in rec_losses_mask]  # len = 8
-            num_pixels = torch.tensor(self.cfg.batch_size * flows_12[2].shape[2] * flows_12[2].shape[3], dtype=torch.float32)
-            image_prior_decoder= utils.charbonnier_loss(gt_flow=flows_12[2],
+            rec_losses_mask = [flow_utils.charbonnier_loss(gt_flow=flows_12[0], pred_flow=pred_flow, mask=mask) for (pred_flow, mask) in zip(pred_flows['fw'], x1_masks['fw'])]
+            rec_losses = [torch.sum(rec_loss) for rec_loss in rec_losses_mask]  # len = slot_num
+            num_pixels = torch.tensor(self.opt.batch_size * flows_12[0].shape[2] * flows_12[0].shape[3], dtype=torch.float32)
+            image_prior_decoder= flow_utils.charbonnier_loss(gt_flow=flows_12[0],
                                               pred_flow=pred_flow_from_image['fw'],
-                                              mask=torch.ones_like(flows_12[2]))
+                                              mask=torch.ones_like(flows_12[0]))
             image_prior_decoder = torch.sum(image_prior_decoder)
             l_rec = (sum(rec_losses) + image_prior_decoder) / num_pixels
             flow_loss += l_rec
@@ -350,8 +351,12 @@ class Trainer:
         if self.opt.use_flow:
             self.build_rigid_warp_flow(outputs["pose"], pred_depth)
         
-        losses = self.compute_losses(inputs, outputs, pred_depth)
+        if self.opt.train_flow:
+            losses = self.compute_losses_mask(inputs, outputs, pred_depth, x1_masks['fw'])
+        else:
+            losses = self.compute_losses(inputs, outputs, pred_depth)
 
+        losses["flow_loss"] = flow_loss
         return outputs, losses
 
     def iter_data_preparation(self, sampled_batch, k):
@@ -618,6 +623,113 @@ class Trainer:
             reprojection_loss = 0.85 * ssim_loss + 0.15 * l1_loss
 
         return reprojection_loss
+
+    def compute_losses_mask(self, inputs, outputs, pred_depth, masks):
+        """Compute the reprojection and smoothness losses for a minibatch
+        """
+        losses = {}
+        total_loss = 0
+        loss = 0
+
+        reproj_loss = 0
+        loss_disp_smooth = 0
+
+        for scale in self.opt.scales:
+            if self.opt.train_flow:
+
+                reprojection_losses = []
+
+                if self.opt.v1_multiscale:  # False
+                    source_scale = scale
+                else:
+                    source_scale = 0
+
+                disp = outputs[("disp", scale)]
+                color = inputs[("color", 0, scale)]
+                target = inputs[("color", 0, source_scale)]
+
+                for frame_id in self.opt.frame_ids[1:]:  # [-1, 1]
+                    pred = outputs[("color", frame_id, scale)]
+                    reprojection_losses.append(self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
+
+                reprojection_losses = torch.cat(reprojection_losses, 1)  # [4,2,192,640]
+
+                if not self.opt.disable_automasking: # False
+                    identity_reprojection_losses = []
+                    for frame_id in self.opt.frame_ids[1:]:
+                        pred = inputs[("color", frame_id, source_scale)]
+                        identity_reprojection_losses.append(
+                            self.compute_reprojection_loss(pred, target))  # [4,1,192,640]
+
+                    identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1) # [4,2,192,640]
+
+                    if self.opt.avg_reprojection:  # False
+                        identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
+                    else:
+                        # save both images, and do min all at once below
+                        identity_reprojection_loss = identity_reprojection_losses # [4,2,192,640]
+
+                elif self.opt.predictive_mask:  # False
+                    # use the predicted mask
+                    mask = outputs["predictive_mask"]["disp", scale]
+                    if not self.opt.v1_multiscale:
+                        mask = F.interpolate(
+                            mask, [self.opt.height, self.opt.width],
+                            mode="bilinear", align_corners=False)
+
+                    reprojection_losses *= mask
+
+                    # add a loss pushing mask to 1 (using nn.BCELoss for stability)
+                    weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
+                    loss = loss + weighting_loss.mean()
+
+                if self.opt.avg_reprojection:  # False
+                    reprojection_loss = reprojection_losses.mean(1, keepdim=True)
+                else:
+                    reprojection_loss = reprojection_losses  # [4,2,192,640]
+
+                if not self.opt.disable_automasking:  # False
+                    # add random numbers to break ties
+                    identity_reprojection_loss += torch.randn(
+                        identity_reprojection_loss.shape).cuda() * 0.00001    # [4,2,192,640]
+
+                    combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)   # [4,4,192,640]
+                else:
+                    combined = reprojection_loss
+
+                if combined.shape[1] == 1:
+                    to_optimise = combined
+                else:  # this
+                    to_optimise, idxs = torch.min(combined, dim=1)  # [4,192,640], [4,192,640]
+
+                loss_mask = to_optimise *((masks[0].squeeze())/16)
+                # if not self.opt.disable_automasking:  # False
+                #     outputs["identity_selection/{}".format(scale)] = (
+                #             idxs > identity_reprojection_loss.shape[1] - 1).float()  # what's this
+
+                loss = loss + loss_mask.mean()  # 0+
+
+                disp = outputs[("disp", scale)]
+                color = inputs[("color", 0, scale)]
+                mean_disp = disp.mean(2, True).mean(3, True)
+                norm_disp = disp / (mean_disp + 1e-7)
+                smooth_loss = get_smooth_loss(norm_disp, color)
+
+                loss = loss + self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
+
+                loss = loss*10**(-scale)
+
+                total_loss = total_loss + loss
+                losses["loss/{}".format(scale)] = loss
+
+
+            else:
+               print('Error!')
+
+        total_loss /= (1 + 1e-1 + 1e-2 + 1e-3)
+
+        losses["loss"] = total_loss
+        return losses
 
     def compute_losses(self, inputs, outputs, pred_depth):
         """Compute the reprojection and smoothness losses for a minibatch

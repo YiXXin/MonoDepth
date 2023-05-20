@@ -151,6 +151,58 @@ class MonodepthOptions:
                                  help="step size of the scheduler",
                                  default=15)
 
+        # flow loss options
+        self.parser.add_argument("--alpha",
+                                 type=int,
+                                 help="alpha",
+                                 default=10)
+        
+        self.parser.add_argument("--occ_from_back",
+                                 type=bool,
+                                 help="whether get the back occlusion",
+                                 default=False)
+        
+        self.parser.add_argument("--w_l1",
+                                 type=float,
+                                 help="the weight of l1 loss",
+                                 default=0.0)
+        
+        self.parser.add_argument("--w_scales",
+                                 type=list,
+                                 help="weight of scaled loss",
+                                 default=[1.0, 1.0, 1.0, 1.0, 0.0])
+        
+        self.parser.add_argument("--w_sm_scales",
+                                 type=list,
+                                 help="weight of smooth scaled loss",
+                                 default=[1.0, 0.0, 0.0, 0.0, 0.0])
+        
+        self.parser.add_argument("--w_smooth",
+                                 type=float,
+                                 help="weight of smoothness loss",
+                                 default=50.0)
+        
+        self.parser.add_argument("--w_ssim",
+                                 type=float,
+                                 help="weight of ssim loss",
+                                 default=0.0)
+        
+        self.parser.add_argument("--w_ternary",
+                                 type=float,
+                                 help="weight of ternary",
+                                 default=1.0)
+        
+        self.parser.add_argument("--warp_pad",
+                                 type=str,
+                                 help="warp padding",
+                                 default="border")
+        
+        self.parser.add_argument("--with_bk",
+                                 type=bool,
+                                 help="whether with backward flow",
+                                 default=True)
+
+
         # ABLATION options
         self.parser.add_argument("--v1_multiscale",
                                  help="if set, uses monodepth v1 multiscale",

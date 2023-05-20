@@ -5,7 +5,7 @@ import einops
 import numpy as np
 import torchvision as tv
 
-from .warp_utils import flow_warp
+from .utils.warp_utils import flow_warp
 from .correlation_native import Correlation
 
 def conv(in_planes, out_planes, kernel_size=3, stride=1, dilation=1, isReLU=True):
@@ -74,7 +74,7 @@ class Discriminator(nn.Module):
         self.flow_masked_resize = torch.cat([flow_masked, self.ones_x, 1.0-mask], dim=1)  # [16,4,192,384]
         self.flow_in_channels = self.flow_masked_resize.shape[1]  # 4
 
-        self.aconv1 = conv_recover(128,int(64*f), kernel_size=7, stride=2, dilation=1,isReLU=True)
+        self.aconv1 = conv_recover(96,int(64*f), kernel_size=7, stride=2, dilation=1,isReLU=True)
         self.aconv2 = conv_recover(int(64*f),int(128*f), kernel_size=5, stride=2, dilation=1,isReLU=True)
         self.aconv3 = conv_recover(int(128*f),int(256*f), kernel_size=5, stride=2, dilation=1,isReLU=True)
         self.aconv31 = conv_recover(int(256*f),int(256*f), kernel_size=3, stride=1, dilation=1,isReLU=True)
@@ -569,28 +569,28 @@ class PWCFlow(nn.Module):
                 # bind slots (slots=8)
                 # from ipdb import set_trace
                 # set_trace()
-                x = einops.rearrange(x1, 'b c h w -> b h w c')  # [4, 6, 13, 192]
-                x = spatial_flatten(x)  # Flatten spatial dimensions (treat image as set).   # [4, 78, 192]
-                x = self.mlp[l](self.layer_norm[l](x))  # Feedforward network on set.   # [4, 78, 192]
+                x = einops.rearrange(x1, 'b c h w -> b h w c')  # [4, 3, 10, 192]
+                x = spatial_flatten(x)  # Flatten spatial dimensions (treat image as set).   # [4, 30, 192]
+                x = self.mlp[l](self.layer_norm[l](x))  # Feedforward network on set.   # [4, 30, 192]
                 # `x` has shape: [batch_size, width*height, input_size].
 
                 # Slot Attention module.
-                x1_slots,attn = self.slot_attention[l](x)   # [4, 8, 192]   [4,8,78]
+                x1_slots,attn = self.slot_attention[l](x)   # [4, 2, 192]   [4,2,30]
                 # `slots` has shape: [batch_size, num_slots, slot_size].
 
                 # ---- modify attention mask -------
-                attn = einops.rearrange(attn, 'b n (h w) -> b n h w', h = h_init[l])   # [4,8,6,13]
+                attn = einops.rearrange(attn, 'b n (h w) -> b n h w', h = h_init[l])   # [4,2,3,10]
 
-                attn_mask = F.one_hot(torch.argmax(attn, dim=1), num_classes = self.num_slots).float()  # [4,6,13,8]
-                attn_mask = einops.rearrange(attn_mask, 'b h w n -> b n h w')  # [4, 8, 6, 13]
+                attn_mask = F.one_hot(torch.argmax(attn, dim=1), num_classes = self.num_slots).float()  # [4,3,10,2]
+                attn_mask = einops.rearrange(attn_mask, 'b h w n -> b n h w')  # [4, 2, 3, 10]
                 # offset = torch.einsum('bnc, bnhw -> bchw', [x1_slots, attn_mask])  # [4,192,6,13]
-                offset = torch.einsum('bnc, bnhw -> bchw', [x1_slots, attn])  # [4,192,6,13]   0427
+                offset = torch.einsum('bnc, bnhw -> bchw', [x1_slots, attn])  # [4,192,3,10]
 
                 
                 # ------modify recons flow---------0427----------- 
                 # recons = self.decoder_cnn[l](x1 + offset)   # [4, 192, 6, 13])
-                recons = self.decoder_cnn[l](offset)   # [4, 192, 6, 13])   0427
-                recons_flow = self.flow_predictor[l](recons)   # [4, 2, 6, 13], [4, 2, 12, 26], [4, 2, 24, 52]
+                recons = self.decoder_cnn[l](offset)   # [4, 192, 3, 10])   0427
+                recons_flow = self.flow_predictor[l](recons)   # [4, 2, 3, 10], [4, 2, 12, 26], [4, 2, 24, 52]
                 # flow_predictor: 192->2 [6,13]
                 # MSE/MAE loss 
                 # [4,2,12,26] [4,2,24,52] [4,2,48,104]
@@ -602,14 +602,14 @@ class PWCFlow(nn.Module):
                 x1_slots_res.append(x1_slots)
 
             # correlation
-            out_corr = self.corr(x1, x2_warp)   # [4,81,6,13]
+            out_corr = self.corr(x1, x2_warp)   # [4,81,3,10]
             out_corr_relu = self.leakyRELU(out_corr)
 
             # concat and estimate flow
-            x1_1by1 = self.conv_1x1[l](x1)   # [4, 32, 6, 13]
+            x1_1by1 = self.conv_1x1[l](x1)   # [4, 32, 3, 10]
             x_intm, flow_res = self.flow_estimators(
-                torch.cat([out_corr_relu, x1_1by1, flow], dim=1))    # [4, 32, 6, 13]
-            flow = flow + flow_res  # [4, 2, 6, 13]
+                torch.cat([out_corr_relu, x1_1by1, flow], dim=1))    # [4, 32, 3, 10]  [4, 22, 3, 10]
+            flow = flow + flow_res  # [4, 2, 3, 10]
 
             flow_fine = self.context_networks(torch.cat([x_intm, flow], dim=1))
             flow = flow + flow_fine
@@ -622,42 +622,48 @@ class PWCFlow(nn.Module):
                 break
         # from ipdb import set_trace
         # set_trace()
-        # masks_res[0]:[4, 8, 12, 26]  [4, 8, 24, 52]  [4, 8, 48, 104]
+        # masks_res[0]:[4, 2, 3, 10]  [4, 2, 6, 20]  [4, 2, 12, 40]
         # mask = masks_res[2]  # [4,8,48,104]
-        masks = torch.split(masks_res[2], 1, dim=1) # [4, 1, 48, 104] tuple len=8
+        masks = torch.split(masks_res[-1], 1, dim=1) # [4, 1, 12, 40] tuple len=slot_num
         # complementary_masks = [(1.0 - mask) for mask in masks]  # [4, 1, 48, 104] list
 
-        flow_masks = [flows[2] * (1.0 - mask) for mask in masks] # [4, 2, 48, 104]
+        flow_masks = [flows[2] * (1.0 - mask) for mask in masks] # [4, 2, 12, 40]
         # flow_complementary_masks = [flow * (1.0 - complementary_mask) for complementary_mask in complementary_masks]  # [4, 2, 48, 104]
         recover = nn.ModuleList([Discriminator(x1_pyramid[2], flow_mask, mask) for (flow_mask,mask) in zip(flow_masks,masks)])
         # complementary_recover = nn.ModuleList([Discriminator(x1_pyramid[2], flow_complementary_mask, complementary_mask) for (flow_complementary_mask,complementary_mask) in zip(flow_complementary_masks,complementary_masks)])
         recover.to(self.device)
         # complementary_recover.to(self.device)
-        pred_flows = [recover[l](x1_pyramid[2]) for l in range(8)]  # [4, 2, 48, 104] len=8
+        pred_flows = [recover[l](x1_pyramid[2]) for l in range(self.num_slots)]  # [4, 2, 12, 40] len=slot_num
         # pred_complementary_flows = [complementary_recover[l](x1_pyramid[2]) for l in range(8)]
 
         recover_from_image = Discriminator(x1_pyramid[2], torch.zeros_like(flows[2]), torch.ones_like(masks_res[2]))
         recover_from_image.to(self.device)
-        pred_flow_from_image = recover_from_image(x1_pyramid[2])
+        pred_flow_from_image = recover_from_image(x1_pyramid[2])  # [4,2,12,40]
         if self.upsample:
-            flows_upsample = [F.interpolate(flow * 4, scale_factor = 4,
+            flows_upsample = [F.interpolate(flow * 16, scale_factor = 16,
                                    mode='bilinear', align_corners=True) for flow in flows]
+            mask_upsample = [F.interpolate(mask * 16, scale_factor = 16,
+                                   mode='bilinear', align_corners=True) for mask in masks]
+            pred_flows_upsample = [F.interpolate(pred_flow * 16, scale_factor = 16,
+                                   mode='bilinear', align_corners=True) for pred_flow in pred_flows]
+            pred_flow_from_image_upsample = F.interpolate(pred_flow_from_image * 16, scale_factor = 16,
+                                   mode='bilinear', align_corners=True)
             # flows_res = [flows[1], flows[2], flows_upsample[0], flows_upsample[1], flows_upsample[2]]
         # flows[0]: [4,2,24,52], flows[1]: [4,2,48,104], flows[2]: [4,2,96,208],
         # flows[3]: [4,2,192,416], flows[4]: [4,2,384,832] 
 
-        return flows_upsample[::-1], recons_flow_res[::-1], masks, x1_slots_res[::-1], pred_flows, pred_flow_from_image
+        return flows_upsample[::-1], recons_flow_res[::-1], mask_upsample, x1_slots_res[::-1], pred_flows_upsample, pred_flow_from_image_upsample
         
     def forward(self, x, with_bk=False):
         n_frames = x.size(1) / 3
-        from ipdb import set_trace
-        set_trace()
+        # from ipdb import set_trace
+        # set_trace()
 
         imgs = [x[:, 3 * i: 3 * i + 3] for i in range(int(n_frames))]
-        x = [self.feature_pyramid_extractor(img) + [img] for img in imgs]
+        x = [self.feature_pyramid_extractor(img) + [img] for img in imgs]  # len = 7
         # x = [self.resnet18_model(img) + [img] for img in imgs]
-        # x[0][0]: [4, 512, 12, 26]  x[0][1]: [4, 256, 24, 52]
-        # x[0][2]: [4, 128, 48, 104] x[0][3]: [4, 3, 384, 832]
+        # x[0][0]: [4, 192, 3, 10]  x[0][1]: [4, 128, 6, 20]
+        # x[0][2]: [4, 96, 12, 40] x[0][3]: [4, 64, 24, 80]
 
         res_dict = {}
         recons = {}
