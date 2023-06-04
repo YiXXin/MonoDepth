@@ -9,7 +9,7 @@ conda activate ht_dcmnet
 conda install pytorch torchvision cudatoolkit=11.1 -c pytorch -c nvidia
 pip install -r requirements.txt
 ```
-Our experiments has been done with PyTorch 1.9.0, CUDA 11.2, Python 3.8.5 and Ubuntu 18.04. We use 1 NVIDIA RTX 3090 GPU for training.
+My experiments has been done with PyTorch 1.9.0, CUDA 11.2, Python 3.8.5 and Ubuntu 18.04. I use 1 NVIDIA RTX 3090 GPU for training.
 
 ## Simple Prediction
 
@@ -22,8 +22,9 @@ python test_simple.py --image_path=./test_images/
 You can check depth estimation results with other images from KITTI or your own datasets by adding test images on the folder named "test_images". You can run the code without GPU by using --no_cuda flag.
 
 ## KITTI Dataset
+`
+The dataset path on the 3090GPU is `/remote-home/share/KITTI/KITTI_fengyi/`.
 
-The dataset path on the 3090GPU is /remote-home/share/KITTI/KITTI_fengyi/
 You can download the entire [raw KITTI dataset](http://www.cvlibs.net/datasets/kitti/raw_data.php) by running:
 ```shell
 wget -i splits/kitti_archives_to_download.txt -P /YOUR/DATA/PATH/
