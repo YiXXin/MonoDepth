@@ -1,10 +1,5 @@
-# SwinDepth
+# MonoDepth
 
-This is the PyTorch implementation of the paper "SwinDepth: Unsupervised Depth Estimation using Monocular Sequences via Swin Transformer and Densely Cascaded Network" (ICRA 2023). [[paper](https://arxiv.org/abs/2301.06715)]
-
-We provide pre-trained weights and evaluation codes for a simple visualization of depth estimation results on KITTI dataset.
-
-Download the pre-trained weights from [here](https://drive.google.com/drive/folders/1I3E3qLFoYeDw8pmbFbr4TNpElnAaxdtO?usp=sharing) and place them in "./checkpoints/best" folder
 ## Setup
 
 
@@ -14,11 +9,10 @@ conda activate ht_dcmnet
 conda install pytorch torchvision cudatoolkit=11.1 -c pytorch -c nvidia
 pip install -r requirements.txt
 ```
-Our experiments has been done with PyTorch 1.9.0, CUDA 11.2, Python 3.8.5 and Ubuntu 18.04. We use 4 NVIDIA RTX 3090 GPUs for training, but you can still run our code with GPUs which have smaller memory by reducing the batch_size. A simpel visualziation can be done by GPUs with 3GB of memory use or CPU only is also functional.
+Our experiments has been done with PyTorch 1.9.0, CUDA 11.2, Python 3.8.5 and Ubuntu 18.04. We use 1 NVIDIA RTX 3090 GPU for training.
 
 ## Simple Prediction
 
-pwd: /remote-home/share/KITTI/KITTI_fengyi/
 You can simply visualize the depth estimation results on some images from KITTI with:
 
 ```shell
@@ -29,6 +23,7 @@ You can check depth estimation results with other images from KITTI or your own 
 
 ## KITTI Dataset
 
+The dataset path on the 3090GPU is /remote-home/share/KITTI/KITTI_fengyi/
 You can download the entire [raw KITTI dataset](http://www.cvlibs.net/datasets/kitti/raw_data.php) by running:
 ```shell
 wget -i splits/kitti_archives_to_download.txt -P /YOUR/DATA/PATH/
@@ -66,12 +61,9 @@ Then, you place the pretrained weight in ./checkpoints/imagenet folder.
 
 The depth estimation network is trained by running:
 ```shell
-python train.py --data_path=/YOUR/DATA/PATH --log_dir=./checkpoints --model_name=ht_dcmnet --num_epochs=40 --batch_size=12
+bash run.sh
 ```
-My training:
-```shell
-python train.py --data_path=/remote-home/share/KITTI/KITTI_fengyi --log_dir=./checkpoints --model_name=ht_dcmnet --num_epochs=40 --batch_size=6 --png
-```
+You need to setup the parameters of `depth_encoder, use_flow, train_flow` before training.
 
 ## Evaluation
 
@@ -86,7 +78,6 @@ The following example command evaluates best weights:
 ```shell
 python evaluate_depth.py --data_path=/YOUR/DATA/PATH --load_weights_folder ./checkpoints/best/
 ```
-/remote-home/share/KITTI/KITTI_fengyi
 
 
 ## Reference
